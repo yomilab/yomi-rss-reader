@@ -21,6 +21,8 @@ import type {
 } from '@/contexts/FeedContext';
 import { ArticleListItem } from './ArticleListItem';
 import { ArticleListSkeletonGroup } from './ArticleListSkeleton';
+import { ArticleListActiveHighlight } from './ArticleListActiveHighlight';
+import { resolveArticleListActiveHighlightRect } from './articleListActiveHighlightMotion';
 import { FeedLineLoader } from '@/components/common/FeedLineLoader';
 import { InteractionProfiler } from '@/components/common/InteractionProfiler';
 import { useArticleListScrollOffset } from './hooks/articleListScrollOffsetContext';
@@ -172,6 +174,19 @@ export const ArticleListVirtualScrollPane = memo(function ArticleListVirtualScro
   const lastVirtualIndex = virtualItems[virtualItems.length - 1]?.index ?? -1;
 
   const highlightedArticleHash = keyboardFocusHash ?? activeArticleHash;
+  const highlightedArticleIndex = useMemo(() => (
+    highlightedArticleHash
+      ? filteredArticles.findIndex((article) => article.hash === highlightedArticleHash)
+      : -1
+  ), [filteredArticles, highlightedArticleHash]);
+  // The gliding block behind the highlighted row (R-07). The virtualizer knows
+  // every row's offset, mounted or not, so the block can glide to a row that
+  // is about to scroll into view.
+  const activeHighlightRect = resolveArticleListActiveHighlightRect(
+    highlightedArticleIndex,
+    rowVirtualizer.measurementsCache,
+    virtualItems,
+  );
   // One Tab stop for the whole list: the highlighted row, else the first row.
   const tabStopHash = useMemo(() => (
     highlightedArticleHash && filteredArticles.some((article) => article.hash === highlightedArticleHash)
@@ -527,6 +542,11 @@ export const ArticleListVirtualScrollPane = memo(function ArticleListVirtualScro
             aria-label={sourceLabel ? `${sourceLabel} articles` : 'Articles'}
             style={{ height: `${rowVirtualizer.getTotalSize() + ARTICLE_LIST_BOTTOM_SPACER_HEIGHT}px` }}
           >
+            <ArticleListActiveHighlight
+              hash={highlightedArticleIndex >= 0 ? highlightedArticleHash : null}
+              sourceKey={sourceKey}
+              rect={activeHighlightRect}
+            />
             {virtualItems.map((virtualRow) => {
               const article = filteredArticles[virtualRow.index];
               if (!article) return null;

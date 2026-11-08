@@ -116,6 +116,28 @@ html[data-os="other"] .article-list {
   width: 100%;
 }
 
+/* Active highlight (R-07): one block behind the highlighted row that glides
+   between rows (ArticleListActiveHighlight). It sits before the rows in the
+   spacer, so rows paint over it, and it is a little wider than the row card. */
+.article-list-active-highlight {
+  --article-list-active-outset: 8px;
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  width: calc(
+    min(var(--article-list-column-width), var(--max-article-width))
+    + var(--article-list-active-outset) * 2
+  );
+  max-width: 100%;
+  margin: 0 auto;
+  border-radius: 8px;
+  background-color: var(--article-list-active-bg);
+  box-shadow: inset 0 0 0 0.5px var(--article-list-active-edge);
+  pointer-events: none;
+  will-change: transform;
+}
+
 .article-list-bottom-spacer {
   position: absolute;
   top: 0;
@@ -463,20 +485,10 @@ html[data-os="other"] .article-list {
   height: 12px;
 }
 
-/* Active state: article is highlighted (last clicked) */
-.article-list-item.is-active .article-list-item-content {
-  background-color: var(--theme-hover-overlay);
-  border-radius: 4px;
-}
-
-/* Use system accent tint only when runtime reports it is available. */
-.system-accent-color-available .article-list-item.is-active .article-list-item-content {
-  background-color: color-mix(in srgb, var(--system-accent-color) 8%, transparent);
-}
-
-/* Thin inset edge on the active row, whether or not it holds DOM focus. */
-.article-list-item.is-active .article-list-item-content,
-.article-list-item:focus .article-list-item-content {
+/* Active state: the gliding block (.article-list-active-highlight) draws the
+   fill, so the active row itself has no background or edge. Other rows that
+   hold mouse focus keep the thin inset edge. */
+.article-list-item:focus:not(.is-active) .article-list-item-content {
   outline: 1px solid var(--theme-article-bg);
   outline-offset: -1px;
 }
@@ -780,4 +792,33 @@ html[data-os="other"] .article-list {
   display: flex;
   justify-content: center;
   padding: 12px 0 20px;
+}
+
+/* Active row text (R-07): the colors shift with the block so text stays
+   readable on it (test/styles/articleListActiveContrast.test.ts). */
+.article-list-item-title,
+.article-list-item-description,
+.article-list-item-source-text,
+.article-list-item-date {
+  transition: color 0.24s ease-out, opacity 0.24s ease-out;
+}
+
+.article-list-item.is-active .article-list-item-title {
+  color: var(--article-list-active-color);
+}
+
+.article-list-item.is-active .article-list-item-description,
+.article-list-item.is-active .article-list-item-source-text,
+.article-list-item.is-active .article-list-item-date {
+  color: var(--article-list-active-secondary-color);
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .article-list-item-title,
+  .article-list-item-description,
+  .article-list-item-source-text,
+  .article-list-item-date {
+    transition: none;
+  }
 }

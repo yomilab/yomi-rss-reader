@@ -28,15 +28,19 @@ describe('keyboard focus ring contract', () => {
       expect(base).toContain(selector);
     }
     // After the row's own :focus rule, which would otherwise win.
+    const mouseFocusRule = articleList.indexOf('.article-list-item:focus:not(.is-active) .article-list-item-content {');
+    expect(mouseFocusRule).toBeGreaterThan(-1);
     expect(articleList.indexOf('.article-list-item:focus-visible > .article-list-item-content {'))
-      .toBeGreaterThan(articleList.indexOf('.article-list-item:focus .article-list-item-content {'));
+      .toBeGreaterThan(mouseFocusRule);
   });
 
   it('keeps the article row ring thin and inside the row', () => {
     expect(articleList).toMatch(/\.article-list-item:focus-visible > \.article-list-item-content \{\s*outline: 1px solid var\(--focus-ring-color\);\s*outline-offset: -1px;/);
   });
 
-  it('shows the thin inset edge on the active row without needing DOM focus', () => {
-    expect(articleList).toMatch(/\.article-list-item\.is-active \.article-list-item-content,\s*\.article-list-item:focus \.article-list-item-content \{\s*outline: 1px solid var\(--theme-article-bg\);\s*outline-offset: -1px;/);
+  it('leaves the active row to the gliding block, and keeps the thin edge for other focused rows', () => {
+    // R-07: the block behind the active row replaces its inset edge.
+    expect(articleList).not.toMatch(/\.article-list-item\.is-active \.article-list-item-content[^{]*\{[^}]*outline:/);
+    expect(articleList).toMatch(/\.article-list-item:focus:not\(\.is-active\) \.article-list-item-content \{\s*outline: 1px solid var\(--theme-article-bg\);\s*outline-offset: -1px;/);
   });
 });
