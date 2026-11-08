@@ -30,12 +30,19 @@ describe('keyboard focus ring contract', () => {
     // After the row's own :focus rule, which would otherwise win.
     const mouseFocusRule = articleList.indexOf('.article-list-item:focus:not(.is-active) .article-list-item-content {');
     expect(mouseFocusRule).toBeGreaterThan(-1);
-    expect(articleList.indexOf('.article-list-item:focus-visible > .article-list-item-content {'))
+    expect(articleList.indexOf('.article-list-item:focus-visible:not(.is-active) > .article-list-item-content {'))
       .toBeGreaterThan(mouseFocusRule);
   });
 
   it('keeps the article row ring thin and inside the row', () => {
-    expect(articleList).toMatch(/\.article-list-item:focus-visible > \.article-list-item-content \{\s*outline: 1px solid var\(--focus-ring-color\);\s*outline-offset: -1px;/);
+    expect(articleList).toMatch(/\.article-list-item:focus-visible:not\(\.is-active\) > \.article-list-item-content \{\s*outline: 1px solid var\(--focus-ring-color\);\s*outline-offset: -1px;/);
+  });
+
+  it('draws no ring on the active row, where the gliding block already shows focus', () => {
+    // Focus returns to the active row after the reader closes and follows j/k;
+    // a ring there showed a second active effect on top of the block (R-07).
+    expect(articleList).not.toMatch(/\.article-list-item:focus-visible > \.article-list-item-content \{/);
+    expect(articleList).not.toMatch(/\.article-list-item\.is-active:focus-visible[^{]*\{[^}]*outline: 1px solid/);
   });
 
   it('leaves the active row to the gliding block, and keeps the thin edge for other focused rows', () => {
