@@ -8,14 +8,16 @@
 export const ARTICLE_LIST_ROW_GAP_PX = 2;
 
 /**
- * Glide curve: a spring with no bounce, so the block eases in and settles
- * without overshooting. A spring keeps its speed when the target changes
- * mid-move, which keeps held j/k or arrow keys smooth.
+ * Glide curve: a short, stiff spring with a little bounce, so the block
+ * leaves quickly and overshoots slightly before it settles (owner,
+ * 2026-11-08: the no-bounce 0.32 s spring started too slowly). A spring keeps
+ * its speed when the target changes mid-move, which keeps held j/k or arrow
+ * keys smooth.
  */
 export const ARTICLE_LIST_ACTIVE_HIGHLIGHT_GLIDE = {
   type: 'spring',
-  visualDuration: 0.32,
-  bounce: 0,
+  visualDuration: 0.22,
+  bounce: 0.28,
 } as const;
 
 export const ARTICLE_LIST_ACTIVE_HIGHLIGHT_SNAP = { duration: 0 } as const;

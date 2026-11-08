@@ -72,9 +72,12 @@ describe('shouldGlideArticleListActiveHighlight', () => {
     expect(shouldGlideArticleListActiveHighlight({ ...move, prefersReducedMotion: true })).toBe(false);
   });
 
-  it('glides on a curve that settles without overshooting', () => {
-    expect(ARTICLE_LIST_ACTIVE_HIGHLIGHT_GLIDE).toMatchObject({ type: 'spring', bounce: 0 });
-    expect(ARTICLE_LIST_ACTIVE_HIGHLIGHT_GLIDE.visualDuration).toBeGreaterThan(0.15);
-    expect(ARTICLE_LIST_ACTIVE_HIGHLIGHT_GLIDE.visualDuration).toBeLessThan(0.5);
+  it('glides on a quick spring with a small bounce', () => {
+    expect(ARTICLE_LIST_ACTIVE_HIGHLIGHT_GLIDE.type).toBe('spring');
+    // A visible but small overshoot; more reads as wobbly on a list.
+    expect(ARTICLE_LIST_ACTIVE_HIGHLIGHT_GLIDE.bounce).toBeGreaterThan(0.1);
+    expect(ARTICLE_LIST_ACTIVE_HIGHLIGHT_GLIDE.bounce).toBeLessThanOrEqual(0.35);
+    // Fast start: the 0.32 s spring felt slow to leave the old row.
+    expect(ARTICLE_LIST_ACTIVE_HIGHLIGHT_GLIDE.visualDuration).toBeLessThanOrEqual(0.25);
   });
 });
