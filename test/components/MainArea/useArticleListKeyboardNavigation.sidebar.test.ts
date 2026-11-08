@@ -55,6 +55,20 @@ describe('article list ← to the sidebar (R-08)', () => {
     expect(setKeyboardFocusHash).not.toHaveBeenCalled();
   });
 
+  it('moves to the sidebar with h too', () => {
+    setup();
+    press(document.body, 'h');
+    expect(document.activeElement).toBe(sidebarItem('feed'));
+  });
+
+  it('leaves h / l pressed in the sidebar to the sidebar', () => {
+    const { setKeyboardFocusHash } = setup();
+    sidebarItem('today').focus();
+    expect(press(sidebarItem('today'), 'h').defaultPrevented).toBe(false);
+    expect(document.activeElement).toBe(sidebarItem('today'));
+    expect(setKeyboardFocusHash).not.toHaveBeenCalled();
+  });
+
   it('leaves ← alone with a modifier or while the article covers the list', () => {
     setup();
     expect(press(document.body, 'ArrowLeft', { shiftKey: true }).defaultPrevented).toBe(false);

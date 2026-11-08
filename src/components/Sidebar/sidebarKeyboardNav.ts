@@ -10,6 +10,37 @@ export function listSidebarNavItems(container: ParentNode): HTMLElement[] {
   );
 }
 
+const isPlain = (event: Pick<KeyboardEvent, 'metaKey' | 'ctrlKey' | 'altKey' | 'shiftKey'>): boolean =>
+  !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey;
+
+/** ← or h (vim): from the article list to the sidebar. */
+export function isFocusSidebarKey(
+  event: Pick<KeyboardEvent, 'key' | 'metaKey' | 'ctrlKey' | 'altKey' | 'shiftKey'>,
+): boolean {
+  return isPlain(event) && (event.key === 'ArrowLeft' || event.key === 'h');
+}
+
+/** → or l (vim): from the sidebar back to the article list. */
+export function isFocusArticleListKey(
+  event: Pick<KeyboardEvent, 'key' | 'metaKey' | 'ctrlKey' | 'altKey' | 'shiftKey'>,
+): boolean {
+  return isPlain(event) && (event.key === 'ArrowRight' || event.key === 'l');
+}
+
+/**
+ * Move keyboard focus from the sidebar back to the article list: the row that
+ * holds the list's Tab stop (the highlighted row, else the first row).
+ * Returns false when the list has no rows.
+ */
+export function focusArticleListRow(root: ParentNode = document): boolean {
+  const row = root.querySelector<HTMLElement>(
+    '[data-section="article-list-items"] .article-list-item[data-entity-id][tabindex="0"]',
+  );
+  if (!row) return false;
+  row.focus();
+  return true;
+}
+
 /** j / k move like Down / Up (vim), only as plain presses. */
 export function sidebarVimStep(
   event: Pick<KeyboardEvent, 'key' | 'metaKey' | 'ctrlKey' | 'altKey' | 'shiftKey'>,
@@ -41,7 +72,9 @@ export function focusSidebarSelection(root: ParentNode = document): boolean {
 /**
  * Source list keys (one Tab stop, arrows move between rows, like a macOS
  * source list): Up/Down (or j/k), Home/End move focus; Enter/Space select the
- * row. Returns true when the key was handled.
+ * row; Right (or l) goes back to the article list. Moving never selects a
+ * source or folds/unfolds a station: only Enter/Space (or a click) select.
+ * Returns true when the key was handled.
  */
 export function handleSidebarNavKeyDown(
   event: Pick<KeyboardEvent, 'key' | 'target' | 'metaKey' | 'ctrlKey' | 'altKey' | 'shiftKey' | 'preventDefault'>,
@@ -55,6 +88,12 @@ export function handleSidebarNavKeyDown(
   if (event.key === 'Enter' || event.key === ' ') {
     event.preventDefault();
     target.click();
+    return true;
+  }
+
+  if (isFocusArticleListKey(event)) {
+    if (!focusArticleListRow()) return false;
+    event.preventDefault();
     return true;
   }
 

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  focusArticleListRow,
   focusSidebarSelection,
   handleSidebarNavKeyDown,
   sidebarVimStep,
@@ -19,7 +20,11 @@ const buildSidebar = ({ selected = 'unread', libraryFolded = false } = {}) => {
         <div role="button" tabindex="${selected === 'feed' ? 0 : -1}" data-sidebar-nav-item="" data-id="feed"
           ${selected === 'feed' ? 'aria-current="page"' : ''}></div>
       </div>
-    </nav>`;
+    </nav>
+    <div data-section="article-list-items">
+      <div class="article-list-item" data-entity-id="a0" tabindex="-1"></div>
+      <div class="article-list-item" data-entity-id="a1" tabindex="0"></div>
+    </div>`;
   return document.querySelector<HTMLElement>('nav')!;
 };
 
@@ -89,5 +94,38 @@ describe('focusSidebarSelection (← from the article list)', () => {
 
   it('does nothing without a sidebar', () => {
     expect(focusSidebarSelection()).toBe(false);
+  });
+});
+
+describe('→ / l back to the article list', () => {
+  const listRow = (hash: string) => document.querySelector<HTMLElement>(`[data-entity-id="${hash}"]`)!;
+
+  it.each(['ArrowRight', 'l'])('%s focuses the list\'s highlighted row', (key) => {
+    buildSidebar();
+    item('today').focus();
+    expect(press(item('today'), key)).toEqual({ handled: true, prevented: true });
+    expect(document.activeElement).toBe(listRow('a1'));
+  });
+
+  it('leaves → alone when the list has no rows, and ← does nothing in the sidebar', () => {
+    buildSidebar();
+    document.querySelector('[data-section="article-list-items"]')!.innerHTML = '';
+    item('today').focus();
+    expect(press(item('today'), 'ArrowRight').handled).toBe(false);
+    expect(press(item('today'), 'ArrowLeft').handled).toBe(false);
+    expect(document.activeElement).toBe(item('today'));
+    expect(focusArticleListRow()).toBe(false);
+  });
+
+  it('never selects the row it moves to', () => {
+    buildSidebar({ selected: 'today' });
+    let clicks = 0;
+    item('unread').addEventListener('click', () => { clicks += 1; });
+    item('today').focus();
+    press(item('today'), 'j');
+    press(item('unread'), 'ArrowDown');
+    press(item('feed'), 'k');
+    expect(clicks).toBe(0);
+    expect(item('today').getAttribute('aria-current')).toBe('page');
   });
 });

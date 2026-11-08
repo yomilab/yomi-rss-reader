@@ -15,7 +15,7 @@ import {
 import { animateElementScrollTop, getScrollableBottom } from '@/utils/fixedTimeScroll';
 import { recordRobustnessEvent } from '@/services/diagnostics/robustnessMetrics';
 import { resolveArticleListFocusHash, resolveArticleListFocusIndex } from '../articleListKeyboardFocus';
-import { focusSidebarSelection, sidebarVimStep } from '@/components/Sidebar/sidebarKeyboardNav';
+import { focusSidebarSelection, isFocusSidebarKey, sidebarVimStep } from '@/components/Sidebar/sidebarKeyboardNav';
 
 interface UseArticleListKeyboardNavigationOptions {
   articleListRef: RefObject<HTMLDivElement>;
@@ -104,7 +104,7 @@ export const useArticleListKeyboardNavigation = ({
       const isSpace = e.key === ' ' || e.code === 'Space';
       if (e.target.closest('[data-sidebar-nav-item]')) {
         return isSpace || e.key.startsWith('Arrow') || e.key === 'Home' || e.key === 'End'
-          || sidebarVimStep(e) !== 0;
+          || sidebarVimStep(e) !== 0 || e.key === 'h' || e.key === 'l';
       }
       return isSpace && e.target.closest('button, a[href], [role="button"], [role="link"]') !== null;
     };
@@ -312,12 +312,8 @@ export const useArticleListKeyboardNavigation = ({
 
       if (handleVimScrollShortcut(e)) return;
 
-      // ← moves focus to the sidebar's selected source (R-08).
-      if (
-        e.key === 'ArrowLeft'
-        && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey
-        && getShortcutPriorityLayer() !== 'modal'
-      ) {
+      // ← (or h) moves focus to the sidebar's selected source (R-08).
+      if (isFocusSidebarKey(e) && getShortcutPriorityLayer() !== 'modal') {
         if (focusSidebarSelection()) {
           e.preventDefault();
           resetHold();
