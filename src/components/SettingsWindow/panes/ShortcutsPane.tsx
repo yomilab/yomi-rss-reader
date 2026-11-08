@@ -17,6 +17,9 @@ export const SHORTCUT_GROUPS: ReadonlyArray<ShortcutGroup> = [
       { id: 'add-feed', label: 'Add New Feed', keys: SHORTCUT_LABELS.ADD_FEED },
       { id: 'search', label: 'Search Articles', keys: SHORTCUT_LABELS.SEARCH_ARTICLES },
       { id: 'feed-edit-view', label: 'Manage Feeds', keys: SHORTCUT_LABELS.OPEN_FEED_EDIT_VIEW },
+      { id: 'focus-sidebar', label: 'Go to Sidebar from the Article List', keys: SHORTCUT_LABELS.FOCUS_SIDEBAR },
+      { id: 'sidebar-step', label: 'Move in Sidebar', keys: SHORTCUT_LABELS.SIDEBAR_STEP },
+      { id: 'focus-article-list', label: 'Back to the Article List from the Sidebar', keys: SHORTCUT_LABELS.FOCUS_ARTICLE_LIST },
     ],
   },
   {

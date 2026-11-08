@@ -15,6 +15,7 @@ import {
 import { animateElementScrollTop, getScrollableBottom } from '@/utils/fixedTimeScroll';
 import { recordRobustnessEvent } from '@/services/diagnostics/robustnessMetrics';
 import { resolveArticleListFocusHash, resolveArticleListFocusIndex } from '../articleListKeyboardFocus';
+import { focusSidebarSelection, isFocusSidebarKey, sidebarVimStep } from '@/components/Sidebar/sidebarKeyboardNav';
 
 interface UseArticleListKeyboardNavigationOptions {
   articleListRef: RefObject<HTMLDivElement>;
@@ -97,12 +98,13 @@ export const useArticleListKeyboardNavigation = ({
     const isArticleListCovered = (): boolean => articleViewOverlayPhaseRef.current !== 'closed';
 
     // Keys a focused control handles itself: Space presses a button (toast
-    // Undo, sidebar actions) and the arrows / Space move within the sidebar.
+    // Undo, sidebar actions) and the arrows, j/k and Space move within the sidebar.
     const isOwnedByFocusedControl = (e: KeyboardEvent): boolean => {
       if (!(e.target instanceof Element)) return false;
       const isSpace = e.key === ' ' || e.code === 'Space';
       if (e.target.closest('[data-sidebar-nav-item]')) {
-        return isSpace || e.key.startsWith('Arrow') || e.key === 'Home' || e.key === 'End';
+        return isSpace || e.key.startsWith('Arrow') || e.key === 'Home' || e.key === 'End'
+          || sidebarVimStep(e) !== 0 || e.key === 'h' || e.key === 'l';
       }
       return isSpace && e.target.closest('button, a[href], [role="button"], [role="link"]') !== null;
     };
@@ -309,6 +311,15 @@ export const useArticleListKeyboardNavigation = ({
       if (isOwnedByFocusedControl(e)) return;
 
       if (handleVimScrollShortcut(e)) return;
+
+      // ← (or h) moves focus to the sidebar's selected source (R-08).
+      if (isFocusSidebarKey(e) && getShortcutPriorityLayer() !== 'modal') {
+        if (focusSidebarSelection()) {
+          e.preventDefault();
+          resetHold();
+        }
+        return;
+      }
 
       if (isOpenArticleShortcut(e)) {
         const articles = filteredArticlesRef.current;
