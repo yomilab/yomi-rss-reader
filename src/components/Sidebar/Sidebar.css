@@ -73,6 +73,51 @@ html[data-os="other"] .sidebar {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  /* Positioning box and own stacking context for the gliding highlight, which
+     sits at z-index -1: above the sidebar's background, under every row. */
+  position: relative;
+  isolation: isolate;
+}
+
+/* Gliding highlight (R-08, same block as the article list's R-07): behind the
+   row the keyboard is on, else the selected source (SidebarGlideHighlight). */
+.sidebar-glide-highlight {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: -1;
+  border-radius: 6px;
+  background-color: var(--article-list-active-bg);
+  box-shadow: inset 0 0 0 0.5px var(--article-list-active-edge);
+  pointer-events: none;
+  will-change: transform;
+}
+
+/* The row under the block takes the block's text color. Rows draw no selected
+   tint of their own any more (the block does), and no focus ring while the
+   block marks them. `nav` lifts this over the base.css ring rule. */
+nav.sidebar-content .smart-view-item,
+nav.sidebar-content .tag-item,
+nav.sidebar-content .feed-list-item,
+nav.sidebar-content .station-feed-item {
+  transition: color 0.24s ease-out;
+}
+
+nav.sidebar-content [data-sidebar-glide-target] {
+  color: var(--article-list-active-color);
+}
+
+nav.sidebar-content [data-sidebar-glide-target]:has(:focus-visible) {
+  outline: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  nav.sidebar-content .smart-view-item,
+  nav.sidebar-content .tag-item,
+  nav.sidebar-content .feed-list-item,
+  nav.sidebar-content .station-feed-item {
+    transition: none;
+  }
 }
 
 .sidebar-content > * {

@@ -157,6 +157,8 @@ export const SHORTCUT_LABELS = {
   VIM_SCROLL_HALF_UP: 'Ctrl + U',
   ARTICLE_LIST_STEP_DOWN: 'J / ↓',
   ARTICLE_LIST_STEP_UP: 'K / ↑',
+  FOCUS_SIDEBAR: '←',
+  SIDEBAR_STEP: 'J / K / ↑ / ↓',
   RESET_SETTINGS: 'Cmd + Shift + R',
   READER_TEXT_BIGGER: 'Cmd + +',
   READER_TEXT_SMALLER: 'Cmd + -',

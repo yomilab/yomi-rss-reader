@@ -20,6 +20,7 @@ import { abortSidebarListDrag } from './sidebarListDrag';
 import { resolveHoveredSidebarSection } from './sidebarSectionHover';
 import { SidebarSyncIndicator } from './SidebarSyncIndicator';
 import { handleSidebarNavKeyDown } from './sidebarKeyboardNav';
+import { SidebarGlideHighlight } from './SidebarGlideHighlight';
 import './Sidebar.css';
 
 const MIN_SIDEBAR_WIDTH = 250;
@@ -56,6 +57,7 @@ export const Sidebar: React.FC = () => {
   const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null);
   const [showSyncing, setShowSyncing] = useState(false);
   const sidebarRef = useRef<HTMLElement>(null);
+  const navRef = useRef<HTMLElement>(null);
   const lastPointerRef = useRef<{ x: number; y: number } | null>(null);
   const syncStartTimeRef = useRef<number | null>(null);
   const syncTimeoutRef = useRef<number | null>(null);
@@ -400,6 +402,7 @@ export const Sidebar: React.FC = () => {
         {/* Library chrome stays put. Stations, nested station feeds, and
             unstationed feeds share one scroller down to Settings. */}
         <nav
+          ref={navRef}
           className="sidebar-content"
           aria-label="Sources"
           data-component="sidebar-nav"
@@ -410,6 +413,7 @@ export const Sidebar: React.FC = () => {
           onPointerLeave={handleNavPointerLeave}
           onTransitionEnd={handleNavTransitionEnd}
         >
+          <SidebarGlideHighlight navRef={navRef} />
           {sidebarLibrary.visible && (
             <SidebarSection
               sectionId="library"
