@@ -93,11 +93,12 @@ describe('MiniPlayer', () => {
     });
     fireEvent.click(toggle);
 
+    // Starts in the bottom-right corner: left = 1024 - 248 - 14 = 762.
     expect(pill).toBeTruthy();
-    expect(region.style.right).toBe('214px');
+    expect(region.style.left).toBe('562px');
     expect(region.style.bottom).toBe('514px');
     expect(region.dataset.queuePlacement).toBe('below');
-    expect(JSON.parse(localStorage.getItem(MINI_PLAYER_STORAGE_KEY)!)).toEqual({ right: 214, bottom: 514 });
+    expect(JSON.parse(localStorage.getItem(MINI_PLAYER_STORAGE_KEY)!)).toEqual({ left: 562, bottom: 514 });
     // The click that ended the drag did not pause playback.
     expect(audioPlaybackService.getSnapshot().status).not.toBe('paused');
   });
@@ -113,8 +114,7 @@ describe('MiniPlayer', () => {
       fireEvent.pointerMove(window, { pointerId: 2, clientX: -4000, clientY: -4000 });
       fireEvent.pointerUp(window, { pointerId: 2, clientX: -4000, clientY: -4000 });
     });
-    // The saved spot is the collapsed pill's, so it can reach the left edge.
-    expect(region.style.right).toBe(`${window.innerWidth - 248 - 8}px`);
+    expect(region.style.left).toBe('8px');
     expect(region.style.bottom).toBe(`${window.innerHeight - 48 - 8}px`);
 
     return new Promise<void>((resolve) => setTimeout(() => {
@@ -170,27 +170,80 @@ describe('MiniPlayer', () => {
     }
   });
 
-  it('spreads rightwards instead of off the window when parked at the left edge', () => {
-    const leftEdge = window.innerWidth - 248 - 8;
-    localStorage.setItem(MINI_PLAYER_STORAGE_KEY, JSON.stringify({ right: leftEdge, bottom: 100 }));
+  it('keeps its left edge when it spreads open and folds, so it can sit against a left border', () => {
+    vi.useFakeTimers();
+    try {
+      localStorage.setItem(MINI_PLAYER_STORAGE_KEY, JSON.stringify({ left: 8, bottom: 100 }));
+      render(<MiniPlayer />);
+      act(() => audioPlaybackService.play(first));
+      const region = screen.getByRole('region', { name: 'Now playing' });
+      expect(region.style.left).toBe('8px');
+
+      fireEvent.pointerEnter(region);
+      expect(region.dataset.expanded).toBe('true');
+      expect(region.style.left).toBe('8px');
+
+      fireEvent.pointerLeave(region);
+      act(() => vi.advanceTimersByTime(300));
+      expect(region.dataset.expanded).toBe('false');
+      expect(region.style.left).toBe('8px');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a drag ending against the left border stays there after it folds', () => {
+    vi.useFakeTimers();
+    try {
+      render(<MiniPlayer />);
+      act(() => audioPlaybackService.play(first));
+      const region = screen.getByRole('region', { name: 'Now playing' });
+      fireEvent.pointerEnter(region);
+
+      fireEvent.pointerDown(screen.getByText('First episode'), { button: 0, pointerId: 4, clientX: 700, clientY: 740 });
+      act(() => {
+        fireEvent.pointerMove(window, { pointerId: 4, clientX: -100, clientY: 740 });
+        fireEvent.pointerUp(window, { pointerId: 4, clientX: -100, clientY: 740 });
+      });
+      expect(region.style.left).toBe('8px');
+
+      fireEvent.pointerLeave(region);
+      act(() => vi.advanceTimersByTime(300));
+      expect(region.dataset.expanded).toBe('false');
+      expect(region.style.left).toBe('8px');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('spreads leftwards only when there is no room on the right, keeping its gap', () => {
     render(<MiniPlayer />);
     act(() => audioPlaybackService.play(first));
     const region = screen.getByRole('region', { name: 'Now playing' });
-    expect(region.style.right).toBe(`${leftEdge}px`);
+    // Default corner: right gap 14.
+    expect(region.style.left).toBe(`${window.innerWidth - 248 - 14}px`);
 
     fireEvent.pointerEnter(region);
 
-    expect(region.style.right).toBe(`${window.innerWidth - 400 - 8}px`);
+    expect(region.style.left).toBe(`${window.innerWidth - 400 - 14}px`);
   });
 
   it('starts from the remembered spot', () => {
+    localStorage.setItem(MINI_PLAYER_STORAGE_KEY, JSON.stringify({ left: 120, bottom: 300 }));
+    render(<MiniPlayer />);
+    act(() => audioPlaybackService.play(first));
+
+    const region = screen.getByRole('region', { name: 'Now playing' });
+    expect(region.style.left).toBe('120px');
+    expect(region.style.bottom).toBe('300px');
+  });
+
+  it('reads a spot saved from the right edge by earlier test builds', () => {
     localStorage.setItem(MINI_PLAYER_STORAGE_KEY, JSON.stringify({ right: 120, bottom: 300 }));
     render(<MiniPlayer />);
     act(() => audioPlaybackService.play(first));
 
-    const region = screen.getByRole('region', { name: 'Now playing' });
-    expect(region.style.right).toBe('120px');
-    expect(region.style.bottom).toBe('300px');
+    expect(screen.getByRole('region', { name: 'Now playing' }).style.left).toBe(`${window.innerWidth - 248 - 120}px`);
   });
 
   it('lists earlier episodes and switches to one from the queue', () => {

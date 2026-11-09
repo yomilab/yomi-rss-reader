@@ -1,5 +1,6 @@
 /* Floating "now playing" pill, one row tall. It starts bottom-right and the
-   user can drag it anywhere; `right` / `bottom` come from useMiniPlayerDrag.
+   user can drag it anywhere; `left` / `bottom` come from useMiniPlayerDrag,
+   so spreading open grows it rightwards from a fixed left edge.
    Collapsed it shows the episode and play/pause; on hover it spreads out to
    the full controls. Widths match MINI_PLAYER_*_WIDTH in useMiniPlayerDrag. */
 .mini-player {
@@ -9,11 +10,11 @@
   --mini-player-hover: color-mix(in srgb, var(--theme-text-primary) 8%, transparent);
 
   position: fixed;
-  right: 14px;
+  left: calc(100vw - min(248px, calc(100vw - 28px)) - 14px);
   bottom: 14px;
   z-index: 20;
   width: min(248px, calc(100vw - 28px));
-  transition: width 0.22s cubic-bezier(0.22, 0.61, 0.36, 1), right 0.22s cubic-bezier(0.22, 0.61, 0.36, 1);
+  transition: width 0.22s cubic-bezier(0.22, 0.61, 0.36, 1), left 0.22s cubic-bezier(0.22, 0.61, 0.36, 1);
   color: var(--theme-text-primary);
   font-family: var(--font-family-ui, system-ui, sans-serif);
 }

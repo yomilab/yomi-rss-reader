@@ -2,9 +2,9 @@ import { useCallback, useRef, useState, type PointerEvent as ReactPointerEvent, 
 
 import { useDependencyEffect, useUnmountEffect } from '@/hooks/useLifecycleEffects';
 
-/** Distance from the window's right and bottom edges, in CSS pixels. */
+/** The pill's left edge from the window's left, and its bottom from the window's bottom, in CSS pixels. */
 export interface MiniPlayerOffset {
-  right: number;
+  left: number;
   bottom: number;
 }
 
@@ -14,7 +14,8 @@ interface Size {
 }
 
 export const MINI_PLAYER_STORAGE_KEY = 'mini-player-offset';
-export const DEFAULT_MINI_PLAYER_OFFSET: MiniPlayerOffset = { right: 14, bottom: 14 };
+/** Gap to the window corner where the player starts. */
+const CORNER_GAP = 14;
 /** Matches `.mini-player-pill` height in MiniPlayer.css. */
 export const MINI_PLAYER_PILL_HEIGHT = 48;
 /** Match `.mini-player` widths in MiniPlayer.css: collapsed, and spread open on hover. */
@@ -29,10 +30,10 @@ const DRAG_THRESHOLD = 4;
 
 /** Keep the whole pill inside the window. */
 export function clampMiniPlayerOffset(offset: MiniPlayerOffset, size: Size, viewport: Size): MiniPlayerOffset {
-  const maxRight = Math.max(EDGE_MARGIN, viewport.width - size.width - EDGE_MARGIN);
+  const maxLeft = Math.max(EDGE_MARGIN, viewport.width - size.width - EDGE_MARGIN);
   const maxBottom = Math.max(EDGE_MARGIN, viewport.height - size.height - EDGE_MARGIN);
   return {
-    right: Math.round(Math.min(maxRight, Math.max(EDGE_MARGIN, offset.right))),
+    left: Math.round(Math.min(maxLeft, Math.max(EDGE_MARGIN, offset.left))),
     bottom: Math.round(Math.min(maxBottom, Math.max(EDGE_MARGIN, offset.bottom))),
   };
 }
@@ -41,15 +42,23 @@ export function miniPlayerWidth(viewportWidth: number, expanded: boolean): numbe
   return Math.min(expanded ? MINI_PLAYER_EXPANDED_WIDTH : MINI_PLAYER_COMPACT_WIDTH, viewportWidth - WINDOW_GUTTER);
 }
 
+/** Bottom-right corner, until the user drags the player somewhere else. */
+export function defaultMiniPlayerOffset(viewportWidth: number): MiniPlayerOffset {
+  return { left: Math.max(EDGE_MARGIN, viewportWidth - miniPlayerWidth(viewportWidth, false) - CORNER_GAP), bottom: CORNER_GAP };
+}
+
 /**
- * Where the pill is drawn. The saved spot is for the collapsed pill and keeps
- * its right edge; spread open near the left edge it grows rightwards instead,
- * so its left edge stays put and nothing leaves the window.
+ * Where the pill is drawn. The saved spot is the collapsed pill's left edge,
+ * and spreading open grows it rightwards from there, so it can sit against a
+ * left border. Only when there is no room on the right does it shift left,
+ * keeping the gap it had to the right edge (at most the corner gap).
  */
 export function displayedMiniPlayerOffset(offset: MiniPlayerOffset, expanded: boolean, viewportWidth: number): MiniPlayerOffset {
   if (!expanded) return offset;
-  const maxRight = Math.max(EDGE_MARGIN, viewportWidth - miniPlayerWidth(viewportWidth, true) - EDGE_MARGIN);
-  return { right: Math.min(offset.right, maxRight), bottom: offset.bottom };
+  const compactRightGap = viewportWidth - offset.left - miniPlayerWidth(viewportWidth, false);
+  const rightGap = Math.min(CORNER_GAP, Math.max(EDGE_MARGIN, compactRightGap));
+  const maxLeft = Math.max(EDGE_MARGIN, viewportWidth - miniPlayerWidth(viewportWidth, true) - rightGap);
+  return { left: Math.min(offset.left, maxLeft), bottom: offset.bottom };
 }
 
 /** The queue opens on whichever side of the pill has more room. */
@@ -60,16 +69,21 @@ export function miniPlayerQueueLayout(bottom: number, viewportHeight: number): {
   return { placement, maxHeight: Math.max(0, Math.min(QUEUE_MAX_HEIGHT, placement === 'above' ? spaceAbove : spaceBelow)) };
 }
 
-function readStoredOffset(): MiniPlayerOffset {
+/** null: never moved, so it follows the bottom-right corner. */
+function readStoredOffset(): MiniPlayerOffset | null {
   try {
-    const parsed = JSON.parse(localStorage.getItem(MINI_PLAYER_STORAGE_KEY) ?? 'null') as Partial<MiniPlayerOffset> | null;
-    if (parsed && Number.isFinite(parsed.right) && Number.isFinite(parsed.bottom)) {
-      return { right: parsed.right!, bottom: parsed.bottom! };
+    const parsed = JSON.parse(localStorage.getItem(MINI_PLAYER_STORAGE_KEY) ?? 'null') as
+      (Partial<MiniPlayerOffset> & { right?: number }) | null;
+    if (!parsed || !Number.isFinite(parsed.bottom)) return null;
+    if (Number.isFinite(parsed.left)) return { left: parsed.left!, bottom: parsed.bottom! };
+    // Test builds saved the distance from the right edge.
+    if (Number.isFinite(parsed.right)) {
+      return { left: window.innerWidth - miniPlayerWidth(window.innerWidth, false) - parsed.right!, bottom: parsed.bottom! };
     }
   } catch {
     // Blocked or corrupt storage: fall back to the corner.
   }
-  return DEFAULT_MINI_PLAYER_OFFSET;
+  return null;
 }
 
 function storeOffset(offset: MiniPlayerOffset): void {
@@ -101,13 +115,14 @@ interface DragState {
  * the whole drag, even when the pointer runs past it at the window edge.
  */
 export function useMiniPlayerDrag(wantsExpanded: boolean) {
-  const [offset, setOffset] = useState<MiniPlayerOffset>(readStoredOffset);
+  const [saved, setSaved] = useState<MiniPlayerOffset | null>(readStoredOffset);
   const [viewport, setViewport] = useState<Size>(viewportSize);
   const [dragging, setDragging] = useState(false);
   const dragRef = useRef<DragState | null>(null);
   const suppressClickRef = useRef(false);
   const detachRef = useRef<(() => void) | null>(null);
   const expanded = wantsExpanded || dragging;
+  const offset = saved ?? defaultMiniPlayerOffset(viewport.width);
 
   // The saved spot is the collapsed pill's; the open pill is fitted when drawn.
   const clamp = useCallback((next: MiniPlayerOffset, size: Size = viewportSize()) => (
@@ -118,7 +133,7 @@ export function useMiniPlayerDrag(wantsExpanded: boolean) {
     const onResize = () => {
       const size = viewportSize();
       setViewport(size);
-      setOffset((current) => clamp(current, size));
+      setSaved((current) => current && clamp(current, size));
     };
     onResize();
     window.addEventListener('resize', onResize);
@@ -152,8 +167,8 @@ export function useMiniPlayerDrag(wantsExpanded: boolean) {
         setDragging(true);
       }
       move.preventDefault();
-      drag.last = clamp({ right: drag.origin.right - dx, bottom: drag.origin.bottom - dy });
-      setOffset(drag.last);
+      drag.last = clamp({ left: drag.origin.left + dx, bottom: drag.origin.bottom - dy });
+      setSaved(drag.last);
     };
 
     const onEnd = (end: PointerEvent) => {
