@@ -113,7 +113,8 @@ describe('MiniPlayer', () => {
       fireEvent.pointerMove(window, { pointerId: 2, clientX: -4000, clientY: -4000 });
       fireEvent.pointerUp(window, { pointerId: 2, clientX: -4000, clientY: -4000 });
     });
-    expect(region.style.right).toBe(`${window.innerWidth - 400 - 8}px`);
+    // The saved spot is the collapsed pill's, so it can reach the left edge.
+    expect(region.style.right).toBe(`${window.innerWidth - 248 - 8}px`);
     expect(region.style.bottom).toBe(`${window.innerHeight - 48 - 8}px`);
 
     return new Promise<void>((resolve) => setTimeout(() => {
@@ -123,6 +124,63 @@ describe('MiniPlayer', () => {
       expect(audioPlaybackService.getSnapshot().status).toBe('paused');
       resolve();
     }, 0));
+  });
+
+  it('stays collapsed until hovered, then folds away shortly after the pointer leaves', () => {
+    vi.useFakeTimers();
+    try {
+      render(<MiniPlayer />);
+      act(() => audioPlaybackService.play(first));
+      const region = screen.getByRole('region', { name: 'Now playing' });
+      expect(region.dataset.expanded).toBe('false');
+
+      fireEvent.pointerEnter(region);
+      expect(region.dataset.expanded).toBe('true');
+
+      fireEvent.pointerLeave(region);
+      act(() => vi.advanceTimersByTime(100));
+      expect(region.dataset.expanded).toBe('true');
+      fireEvent.pointerEnter(region);
+      act(() => vi.advanceTimersByTime(500));
+      expect(region.dataset.expanded).toBe('true');
+
+      fireEvent.pointerLeave(region);
+      act(() => vi.advanceTimersByTime(300));
+      expect(region.dataset.expanded).toBe('false');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stays open while the queue is open', () => {
+    vi.useFakeTimers();
+    try {
+      render(<MiniPlayer />);
+      act(() => audioPlaybackService.play(first));
+      const region = screen.getByRole('region', { name: 'Now playing' });
+
+      fireEvent.pointerEnter(region);
+      fireEvent.click(screen.getByRole('button', { name: 'Queue' }));
+      fireEvent.pointerLeave(region);
+      act(() => vi.advanceTimersByTime(1000));
+
+      expect(region.dataset.expanded).toBe('true');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('spreads rightwards instead of off the window when parked at the left edge', () => {
+    const leftEdge = window.innerWidth - 248 - 8;
+    localStorage.setItem(MINI_PLAYER_STORAGE_KEY, JSON.stringify({ right: leftEdge, bottom: 100 }));
+    render(<MiniPlayer />);
+    act(() => audioPlaybackService.play(first));
+    const region = screen.getByRole('region', { name: 'Now playing' });
+    expect(region.style.right).toBe(`${leftEdge}px`);
+
+    fireEvent.pointerEnter(region);
+
+    expect(region.style.right).toBe(`${window.innerWidth - 400 - 8}px`);
   });
 
   it('starts from the remembered spot', () => {

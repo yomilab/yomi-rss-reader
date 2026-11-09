@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, type PointerEvent as ReactPointerEvent, type MouseEvent as ReactMouseEvent, type RefObject } from 'react';
+import { useCallback, useRef, useState, type PointerEvent as ReactPointerEvent, type MouseEvent as ReactMouseEvent } from 'react';
 
 import { useDependencyEffect, useUnmountEffect } from '@/hooks/useLifecycleEffects';
 
@@ -17,6 +17,10 @@ export const MINI_PLAYER_STORAGE_KEY = 'mini-player-offset';
 export const DEFAULT_MINI_PLAYER_OFFSET: MiniPlayerOffset = { right: 14, bottom: 14 };
 /** Matches `.mini-player-pill` height in MiniPlayer.css. */
 export const MINI_PLAYER_PILL_HEIGHT = 48;
+/** Match `.mini-player` widths in MiniPlayer.css: collapsed, and spread open on hover. */
+export const MINI_PLAYER_COMPACT_WIDTH = 248;
+export const MINI_PLAYER_EXPANDED_WIDTH = 400;
+const WINDOW_GUTTER = 28;
 const EDGE_MARGIN = 8;
 const QUEUE_GAP = 8;
 const QUEUE_MAX_HEIGHT = 320;
@@ -31,6 +35,21 @@ export function clampMiniPlayerOffset(offset: MiniPlayerOffset, size: Size, view
     right: Math.round(Math.min(maxRight, Math.max(EDGE_MARGIN, offset.right))),
     bottom: Math.round(Math.min(maxBottom, Math.max(EDGE_MARGIN, offset.bottom))),
   };
+}
+
+export function miniPlayerWidth(viewportWidth: number, expanded: boolean): number {
+  return Math.min(expanded ? MINI_PLAYER_EXPANDED_WIDTH : MINI_PLAYER_COMPACT_WIDTH, viewportWidth - WINDOW_GUTTER);
+}
+
+/**
+ * Where the pill is drawn. The saved spot is for the collapsed pill and keeps
+ * its right edge; spread open near the left edge it grows rightwards instead,
+ * so its left edge stays put and nothing leaves the window.
+ */
+export function displayedMiniPlayerOffset(offset: MiniPlayerOffset, expanded: boolean, viewportWidth: number): MiniPlayerOffset {
+  if (!expanded) return offset;
+  const maxRight = Math.max(EDGE_MARGIN, viewportWidth - miniPlayerWidth(viewportWidth, true) - EDGE_MARGIN);
+  return { right: Math.min(offset.right, maxRight), bottom: offset.bottom };
 }
 
 /** The queue opens on whichever side of the pill has more room. */
@@ -78,23 +97,22 @@ interface DragState {
  * Lets the user drag the mini player anywhere in the window by grabbing any
  * part of the pill. A press that does not move still clicks the control under
  * it; a real drag swallows the click that follows. The spot is remembered.
+ * `wantsExpanded` is whether the pill is spread open; it also stays open for
+ * the whole drag, even when the pointer runs past it at the window edge.
  */
-export function useMiniPlayerDrag(pillRef: RefObject<HTMLElement | null>) {
+export function useMiniPlayerDrag(wantsExpanded: boolean) {
   const [offset, setOffset] = useState<MiniPlayerOffset>(readStoredOffset);
   const [viewport, setViewport] = useState<Size>(viewportSize);
   const [dragging, setDragging] = useState(false);
   const dragRef = useRef<DragState | null>(null);
   const suppressClickRef = useRef(false);
   const detachRef = useRef<(() => void) | null>(null);
+  const expanded = wantsExpanded || dragging;
 
-  const clamp = useCallback((next: MiniPlayerOffset, size: Size = viewportSize()) => {
-    const rect = pillRef.current?.getBoundingClientRect();
-    const pill = {
-      width: rect && rect.width > 0 ? rect.width : Math.min(400, size.width - 28),
-      height: rect && rect.height > 0 ? rect.height : MINI_PLAYER_PILL_HEIGHT,
-    };
-    return clampMiniPlayerOffset(next, pill, size);
-  }, [pillRef]);
+  // The saved spot is the collapsed pill's; the open pill is fitted when drawn.
+  const clamp = useCallback((next: MiniPlayerOffset, size: Size = viewportSize()) => (
+    clampMiniPlayerOffset(next, { width: miniPlayerWidth(size.width, false), height: MINI_PLAYER_PILL_HEIGHT }, size)
+  ), []);
 
   useDependencyEffect(() => {
     const onResize = () => {
@@ -111,12 +129,15 @@ export function useMiniPlayerDrag(pillRef: RefObject<HTMLElement | null>) {
 
   const onPointerDown = useCallback((event: ReactPointerEvent<HTMLElement>) => {
     if (event.button !== 0 || dragRef.current) return;
+    // Start from where the pill is drawn, so a pill shifted to fit while open
+    // follows the pointer at once.
+    const origin = displayedMiniPlayerOffset(offset, expanded, viewport.width);
     dragRef.current = {
       pointerId: event.pointerId,
       startX: event.clientX,
       startY: event.clientY,
-      origin: offset,
-      last: offset,
+      origin,
+      last: origin,
       moved: false,
     };
 
@@ -160,7 +181,7 @@ export function useMiniPlayerDrag(pillRef: RefObject<HTMLElement | null>) {
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onEnd);
     window.addEventListener('pointercancel', onEnd);
-  }, [clamp, offset]);
+  }, [clamp, expanded, offset, viewport.width]);
 
   const onClickCapture = useCallback((event: ReactMouseEvent<HTMLElement>) => {
     if (!suppressClickRef.current) return;
@@ -171,6 +192,8 @@ export function useMiniPlayerDrag(pillRef: RefObject<HTMLElement | null>) {
 
   return {
     offset,
+    position: displayedMiniPlayerOffset(offset, expanded, viewport.width),
+    expanded,
     dragging,
     queueLayout: miniPlayerQueueLayout(offset.bottom, viewport.height),
     onPointerDown,

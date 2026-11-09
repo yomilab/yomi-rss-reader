@@ -1,5 +1,7 @@
 /* Floating "now playing" pill, one row tall. It starts bottom-right and the
-   user can drag it anywhere; `right` / `bottom` come from useMiniPlayerDrag. */
+   user can drag it anywhere; `right` / `bottom` come from useMiniPlayerDrag.
+   Collapsed it shows the episode and play/pause; on hover it spreads out to
+   the full controls. Widths match MINI_PLAYER_*_WIDTH in useMiniPlayerDrag. */
 .mini-player {
   --mini-player-accent: var(--theme-primary, var(--system-accent-color, #3273dc));
   --mini-player-surface: color-mix(in srgb, var(--theme-background) 78%, transparent);
@@ -10,10 +12,15 @@
   right: 14px;
   bottom: 14px;
   z-index: 20;
-  width: min(400px, calc(100vw - 28px));
+  width: min(248px, calc(100vw - 28px));
+  transition: width 0.22s cubic-bezier(0.22, 0.61, 0.36, 1), right 0.22s cubic-bezier(0.22, 0.61, 0.36, 1);
   color: var(--theme-text-primary);
   font-family: var(--font-family-ui, system-ui, sans-serif);
 }
+
+.mini-player[data-expanded="true"] { width: min(400px, calc(100vw - 28px)); }
+/* The pill follows the pointer directly while dragged. */
+.mini-player[data-dragging="true"] { transition: width 0.22s cubic-bezier(0.22, 0.61, 0.36, 1); }
 
 .mini-player-pill,
 .mini-player-queue {
@@ -127,6 +134,34 @@
   align-items: center;
   gap: 1px;
 }
+
+/* Controls that fold away while collapsed. visibility keeps them out of the
+   tab order and away from screen readers until the pill is open. */
+.mini-player-more {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  overflow: hidden;
+  max-width: 0;
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    max-width 0.22s cubic-bezier(0.22, 0.61, 0.36, 1),
+    opacity 0.12s ease,
+    visibility 0s linear 0.22s;
+}
+
+.mini-player[data-expanded="true"] .mini-player-more {
+  opacity: 1;
+  visibility: visible;
+  transition:
+    max-width 0.22s cubic-bezier(0.22, 0.61, 0.36, 1),
+    opacity 0.18s ease 0.06s,
+    visibility 0s;
+}
+
+.mini-player[data-expanded="true"] .mini-player-more-lead { max-width: 30px; }
+.mini-player[data-expanded="true"] .mini-player-more-trail { max-width: 160px; }
 
 .mini-player-icon-button {
   position: relative;
@@ -279,5 +314,7 @@
 .mini-player-queue-remove svg { width: 15px; height: 15px; }
 
 @media (prefers-reduced-motion: reduce) {
-  .mini-player-progress { transition: none; }
+  .mini-player-progress,
+  .mini-player,
+  .mini-player-more { transition: none !important; }
 }

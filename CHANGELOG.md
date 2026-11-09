@@ -5,6 +5,7 @@
 ### Added
 
 - You can drag the podcast player anywhere in the window. It stays where you leave it.
+- The podcast player is smaller: it shows the episode and play/pause, and opens up to all its controls when you hover over it.
 
 ### Fixed
 
