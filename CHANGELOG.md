@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Added
+
+- You can drag the podcast player anywhere in the window. It stays where you leave it.
+
+### Fixed
+
+- The podcast player at the bottom no longer disappears when you play an episode in the article you're reading.
+- You can add an episode to the player's queue from the article, even when nothing is playing yet.
+
 ## [2.0.1] - 2026-11-06
 
 ### Fixed

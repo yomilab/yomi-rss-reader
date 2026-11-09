@@ -1,5 +1,5 @@
-/* Floating "now playing" pill: bottom-right, one row tall, so it never covers
-   more than a corner of the article list or article view. */
+/* Floating "now playing" pill, one row tall. It starts bottom-right and the
+   user can drag it anywhere; `right` / `bottom` come from useMiniPlayerDrag. */
 .mini-player {
   --mini-player-accent: var(--theme-primary, var(--system-accent-color, #3273dc));
   --mini-player-surface: color-mix(in srgb, var(--theme-background) 78%, transparent);
@@ -11,9 +11,6 @@
   bottom: 14px;
   z-index: 20;
   width: min(400px, calc(100vw - 28px));
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
   color: var(--theme-text-primary);
   font-family: var(--font-family-ui, system-ui, sans-serif);
 }
@@ -39,7 +36,15 @@
   border-radius: 14px;
   overflow: hidden;
   box-sizing: border-box;
+  cursor: grab;
+  touch-action: none;
+  -webkit-app-region: no-drag;
 }
+
+.mini-player[data-dragging="true"] .mini-player-pill { cursor: grabbing; }
+.mini-player[data-dragging="true"],
+.mini-player[data-dragging="true"] * { user-select: none; -webkit-user-select: none; }
+.mini-player[data-dragging="true"] .mini-player-pill { box-shadow: 0 16px 40px color-mix(in srgb, var(--theme-shadow, rgba(0, 0, 0, 0.2)) 90%, transparent); }
 
 .mini-player-progress {
   position: absolute;
@@ -191,13 +196,24 @@
   background: var(--mini-player-accent);
 }
 
-/* Queue popover above the pill. */
+/* Queue popover above the pill, or below it when the pill sits near the top.
+   max-height comes from useMiniPlayerDrag so it always fits the window. */
 .mini-player-queue {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 8px);
   border-radius: 14px;
   padding: 6px;
-  max-height: min(320px, calc(100vh - 120px));
+  box-sizing: border-box;
+  max-height: 320px;
   display: flex;
   flex-direction: column;
+}
+
+.mini-player[data-queue-placement="below"] .mini-player-queue {
+  top: calc(100% + 8px);
+  bottom: auto;
 }
 
 .mini-player-queue-header {

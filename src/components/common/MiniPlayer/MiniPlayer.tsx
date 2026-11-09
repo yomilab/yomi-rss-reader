@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 
 import './MiniPlayer.css';
@@ -13,10 +13,9 @@ import {
   type AudioTrack,
 } from '@/services/audio/audioPlaybackService';
 import { AUDIO_ICONS, skipIconSvg } from '@/components/common/AudioPlayer/audioIcons';
+import { useMiniPlayerDrag } from './useMiniPlayerDrag';
 
 interface MiniPlayerProps {
-  /** The episode card for this article is on screen, so the pill steps aside. */
-  hiddenForArticleHash?: string | null;
   /** Opens the episode's article; returns false when it is not reachable. */
   onOpenArticle?: (articleHash: string) => void;
   canOpenArticle?: (articleHash: string) => boolean;
@@ -57,15 +56,17 @@ function describeTrack(track: AudioTrack, isCurrent: boolean, position: number, 
 }
 
 export const MiniPlayer: React.FC<MiniPlayerProps> = ({
-  hiddenForArticleHash = null,
   onOpenArticle,
   canOpenArticle,
 }) => {
   const playback = useAudioPlayback();
   const [queueOpen, setQueueOpen] = useState(false);
+  const pillRef = useRef<HTMLDivElement>(null);
+  const drag = useMiniPlayerDrag(pillRef);
 
+  // Stays up while the episode's own article is open, so the queue is always reachable.
   const current = playback.queue.find((track) => track.id === playback.currentId) ?? null;
-  const visible = !!current && !(current.articleHash && current.articleHash === hiddenForArticleHash);
+  const visible = !!current;
 
   useDependencyEffect(() => {
     if (!queueOpen) return undefined;
@@ -102,6 +103,10 @@ export const MiniPlayer: React.FC<MiniPlayerProps> = ({
           aria-label="Now playing"
           data-component="mini-player"
           data-status={playback.status}
+          data-dragging={drag.dragging ? 'true' : undefined}
+          data-queue-placement={drag.queueLayout.placement}
+          style={{ right: drag.offset.right, bottom: drag.offset.bottom }}
+          onClickCapture={drag.onClickCapture}
           initial={{ opacity: 0, y: 12, scale: 0.98 }}
           animate={{ opacity: 1, y: 0, scale: 1 }}
           exit={{ opacity: 0, y: 12, scale: 0.98 }}
@@ -115,9 +120,10 @@ export const MiniPlayer: React.FC<MiniPlayerProps> = ({
                 role="dialog"
                 aria-label="Listening queue"
                 data-component="mini-player-queue"
-                initial={{ opacity: 0, y: 6 }}
+                style={{ maxHeight: drag.queueLayout.maxHeight }}
+                initial={{ opacity: 0, y: drag.queueLayout.placement === 'above' ? 6 : -6 }}
                 animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: 6 }}
+                exit={{ opacity: 0, y: drag.queueLayout.placement === 'above' ? 6 : -6 }}
                 transition={{ type: 'tween', duration: 0.14 }}
               >
                 <div className="mini-player-queue-header">
@@ -164,7 +170,12 @@ export const MiniPlayer: React.FC<MiniPlayerProps> = ({
             )}
           </AnimatePresence>
 
-          <div className="mini-player-pill">
+          <div
+            ref={pillRef}
+            className="mini-player-pill"
+            data-component="mini-player-pill"
+            onPointerDown={drag.onPointerDown}
+          >
             <Artwork track={current} size="pill" />
             <button
               type="button"
