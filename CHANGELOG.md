@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- In the article list, Enter now opens the highlighted article, just like the Right arrow key.
+
 ## [2.0.1] - 2026-11-06
 
 ### Fixed

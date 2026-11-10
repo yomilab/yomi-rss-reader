@@ -23,6 +23,7 @@ export const SHORTCUT_GROUPS: ReadonlyArray<ShortcutGroup> = [
     id: 'article',
     title: 'Article',
     items: [
+      { id: 'open-article', label: 'Open Article', keys: SHORTCUT_LABELS.OPEN_ARTICLE },
       { id: 'toggle-feed-view-mode', label: 'Toggle Feed View Mode', keys: SHORTCUT_LABELS.TOGGLE_READER_MODE },
       { id: 'close-article', label: 'Close Article View', keys: SHORTCUT_LABELS.CLOSE_ARTICLE_VIEW },
       { id: 'save-article', label: 'Save/Unsave Article', keys: SHORTCUT_LABELS.SAVE_ARTICLE },

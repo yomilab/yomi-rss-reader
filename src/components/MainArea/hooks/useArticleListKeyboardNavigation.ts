@@ -96,15 +96,16 @@ export const useArticleListKeyboardNavigation = ({
 
     const isArticleListCovered = (): boolean => articleViewOverlayPhaseRef.current !== 'closed';
 
-    // Keys a focused control handles itself: Space presses a button (toast
-    // Undo, sidebar actions) and the arrows / Space move within the sidebar.
+    // Keys a focused control handles itself: Space / Enter press a button
+    // (toast Undo, sidebar actions) and the arrows / Space / Enter move within
+    // the sidebar.
     const isOwnedByFocusedControl = (e: KeyboardEvent): boolean => {
       if (!(e.target instanceof Element)) return false;
-      const isSpace = e.key === ' ' || e.code === 'Space';
+      const isPress = e.key === ' ' || e.code === 'Space' || e.key === 'Enter';
       if (e.target.closest('[data-sidebar-nav-item]')) {
-        return isSpace || e.key.startsWith('Arrow') || e.key === 'Home' || e.key === 'End';
+        return isPress || e.key.startsWith('Arrow') || e.key === 'Home' || e.key === 'End';
       }
-      return isSpace && e.target.closest('button, a[href], [role="button"], [role="link"]') !== null;
+      return isPress && e.target.closest('button, a[href], [role="button"], [role="link"], summary') !== null;
     };
 
     // Raw key match for hold release: deliberately ignores shortcut layer and
@@ -311,6 +312,9 @@ export const useArticleListKeyboardNavigation = ({
       if (handleVimScrollShortcut(e)) return;
 
       if (isOpenArticleShortcut(e)) {
+        // A focused row opens itself on Enter (and prevents default); opening
+        // again here would select the article twice.
+        if (e.key === 'Enter' && e.defaultPrevented) return;
         const articles = filteredArticlesRef.current;
         const focusedHash = resolveArticleListFocusHash(
           keyboardFocusHashRef.current,
