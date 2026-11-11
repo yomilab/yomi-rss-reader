@@ -42,6 +42,25 @@
   --rt-shadow-strength: 45%;
 }
 
+/* Ivory: the Yomi portals' ivory theme (paper, ink, ink-2 and accent). */
+[data-reader-theme="ivory"][data-reader-scheme="light"] {
+  --rt-page: #FAF9F5;
+  --rt-ink: #141413;
+  --rt-ink-soft: #5E5D59;
+  --rt-accent: #B5532E;
+  --rt-on-accent: #FFFFFF;
+  --rt-shadow-strength: 10%;
+}
+
+[data-reader-theme="ivory"][data-reader-scheme="dark"] {
+  --rt-page: #141413;
+  --rt-ink: #FAF9F5;
+  --rt-ink-soft: #C2C0B6;
+  --rt-accent: #D97757;
+  --rt-on-accent: #141413;
+  --rt-shadow-strength: 45%;
+}
+
 [data-reader-theme="sepia"][data-reader-scheme="light"] {
   --rt-page: #F4ECD8;
   --rt-ink: #4E3B2C;
