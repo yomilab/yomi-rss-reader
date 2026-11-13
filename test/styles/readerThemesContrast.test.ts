@@ -79,6 +79,24 @@ describe("reader-themes.css", () => {
     expect(css).not.toMatch(/--rt-font-/);
   });
 
+  it("takes Ivory's colors from the portals' ivory theme", () => {
+    // portal-theme themes.css, ivory: --paper, --ink, --ink-2, --accent, --accent-ink.
+    expect(presetTokens.get("ivory/light")).toMatchObject({
+      "--rt-page": "#FAF9F5",
+      "--rt-ink": "#141413",
+      "--rt-ink-soft": "#5E5D59",
+      "--rt-accent": "#B5532E",
+      "--rt-on-accent": "#FFFFFF",
+    });
+    expect(presetTokens.get("ivory/dark")).toMatchObject({
+      "--rt-page": "#141413",
+      "--rt-ink": "#FAF9F5",
+      "--rt-ink-soft": "#C2C0B6",
+      "--rt-accent": "#D97757",
+      "--rt-on-accent": "#141413",
+    });
+  });
+
   describe.each(READER_THEMES.flatMap((theme) => [`${theme.id}/light`, `${theme.id}/dark`]))("%s", (id) => {
     it("meets the readability contrast invariants", () => {
       expectReadable(presetTokens.get(id) ?? {});

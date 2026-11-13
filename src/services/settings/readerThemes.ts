@@ -45,6 +45,16 @@ export const READER_THEMES: readonly ReaderTheme[] = [
     contentLineHeight: 1.7,
   },
   {
+    id: 'ivory',
+    label: 'Ivory',
+    inspiration: 'Ivory paper, warm slate ink, one clay accent',
+    typeface: 'Charter throughout',
+    titleFont: FontStack.READER_CHARTER,
+    bodyFont: FontStack.READER_CHARTER,
+    contentFontWeight: 400,
+    contentLineHeight: 1.6,
+  },
+  {
     id: 'sepia',
     label: 'Sepia',
     inspiration: 'Kindle Sepia',
