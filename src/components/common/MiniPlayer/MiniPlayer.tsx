@@ -1,9 +1,9 @@
-import React, { useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 
 import './MiniPlayer.css';
 import { useAudioPlayback } from '@/hooks/useAudioPlayback';
-import { useDependencyEffect } from '@/hooks/useLifecycleEffects';
+import { useDependencyEffect, useUnmountEffect } from '@/hooks/useLifecycleEffects';
 import {
   audioPlaybackService,
   formatPlaybackRate,
@@ -13,13 +13,24 @@ import {
   type AudioTrack,
 } from '@/services/audio/audioPlaybackService';
 import { AUDIO_ICONS, skipIconSvg } from '@/components/common/AudioPlayer/audioIcons';
+import { useMiniPlayerDrag } from './useMiniPlayerDrag';
 
 interface MiniPlayerProps {
-  /** The episode card for this article is on screen, so the pill steps aside. */
-  hiddenForArticleHash?: string | null;
   /** Opens the episode's article; returns false when it is not reachable. */
   onOpenArticle?: (articleHash: string) => void;
   canOpenArticle?: (articleHash: string) => boolean;
+}
+
+/** Pointer leaving for less than this does not fold the controls away. */
+const COLLAPSE_DELAY_MS = 250;
+
+/** Keyboard focus keeps the controls open; a mouse click's focus does not. */
+function isKeyboardFocus(target: EventTarget | null): boolean {
+  try {
+    return target instanceof Element && target.matches(':focus-visible');
+  } catch {
+    return false;
+  }
 }
 
 const Icon: React.FC<{ path: string }> = ({ path }) => (
@@ -57,15 +68,40 @@ function describeTrack(track: AudioTrack, isCurrent: boolean, position: number, 
 }
 
 export const MiniPlayer: React.FC<MiniPlayerProps> = ({
-  hiddenForArticleHash = null,
   onOpenArticle,
   canOpenArticle,
 }) => {
   const playback = useAudioPlayback();
   const [queueOpen, setQueueOpen] = useState(false);
+  const [hovered, setHovered] = useState(false);
+  const [keyboardFocused, setKeyboardFocused] = useState(false);
+  const collapseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Collapsed it shows the episode and play/pause; hovering spreads the rest out.
+  const drag = useMiniPlayerDrag(hovered || queueOpen || keyboardFocused);
+  const expanded = drag.expanded;
 
+  const cancelCollapse = useCallback(() => {
+    if (collapseTimerRef.current !== null) {
+      clearTimeout(collapseTimerRef.current);
+      collapseTimerRef.current = null;
+    }
+  }, []);
+  const onPointerEnter = useCallback(() => {
+    cancelCollapse();
+    setHovered(true);
+  }, [cancelCollapse]);
+  const onPointerLeave = useCallback(() => {
+    cancelCollapse();
+    collapseTimerRef.current = setTimeout(() => {
+      collapseTimerRef.current = null;
+      setHovered(false);
+    }, COLLAPSE_DELAY_MS);
+  }, [cancelCollapse]);
+  useUnmountEffect(cancelCollapse);
+
+  // Stays up while the episode's own article is open, so the queue is always reachable.
   const current = playback.queue.find((track) => track.id === playback.currentId) ?? null;
-  const visible = !!current && !(current.articleHash && current.articleHash === hiddenForArticleHash);
+  const visible = !!current;
 
   useDependencyEffect(() => {
     if (!queueOpen) return undefined;
@@ -84,7 +120,10 @@ export const MiniPlayer: React.FC<MiniPlayerProps> = ({
   }, [queueOpen]);
 
   useDependencyEffect(() => {
-    if (!visible) setQueueOpen(false);
+    if (visible) return;
+    setQueueOpen(false);
+    setHovered(false);
+    setKeyboardFocused(false);
   }, [visible]);
 
   const isPlaying = playback.status === 'playing' || playback.status === 'loading';
@@ -102,6 +141,17 @@ export const MiniPlayer: React.FC<MiniPlayerProps> = ({
           aria-label="Now playing"
           data-component="mini-player"
           data-status={playback.status}
+          data-expanded={expanded ? 'true' : 'false'}
+          data-dragging={drag.dragging ? 'true' : undefined}
+          data-queue-placement={drag.queueLayout.placement}
+          style={{ left: drag.position.left, bottom: drag.position.bottom }}
+          onClickCapture={drag.onClickCapture}
+          onPointerEnter={onPointerEnter}
+          onPointerLeave={onPointerLeave}
+          onFocus={(event) => setKeyboardFocused(isKeyboardFocus(event.target))}
+          onBlur={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setKeyboardFocused(false);
+          }}
           initial={{ opacity: 0, y: 12, scale: 0.98 }}
           animate={{ opacity: 1, y: 0, scale: 1 }}
           exit={{ opacity: 0, y: 12, scale: 0.98 }}
@@ -115,9 +165,10 @@ export const MiniPlayer: React.FC<MiniPlayerProps> = ({
                 role="dialog"
                 aria-label="Listening queue"
                 data-component="mini-player-queue"
-                initial={{ opacity: 0, y: 6 }}
+                style={{ maxHeight: drag.queueLayout.maxHeight }}
+                initial={{ opacity: 0, y: drag.queueLayout.placement === 'above' ? 6 : -6 }}
                 animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: 6 }}
+                exit={{ opacity: 0, y: drag.queueLayout.placement === 'above' ? 6 : -6 }}
                 transition={{ type: 'tween', duration: 0.14 }}
               >
                 <div className="mini-player-queue-header">
@@ -164,7 +215,11 @@ export const MiniPlayer: React.FC<MiniPlayerProps> = ({
             )}
           </AnimatePresence>
 
-          <div className="mini-player-pill">
+          <div
+            className="mini-player-pill"
+            data-component="mini-player-pill"
+            onPointerDown={drag.onPointerDown}
+          >
             <Artwork track={current} size="pill" />
             <button
               type="button"
@@ -181,14 +236,16 @@ export const MiniPlayer: React.FC<MiniPlayerProps> = ({
               </span>
             </button>
             <div className="mini-player-controls">
-              <button
-                type="button"
-                className="mini-player-icon-button"
-                aria-label={`Back ${SKIP_BACK_SECONDS} seconds`}
-                onClick={() => audioPlaybackService.skipBy(-SKIP_BACK_SECONDS)}
-              >
-                <SkipIcon seconds={SKIP_BACK_SECONDS} direction="back" />
-              </button>
+              <div className="mini-player-more mini-player-more-lead">
+                <button
+                  type="button"
+                  className="mini-player-icon-button"
+                  aria-label={`Back ${SKIP_BACK_SECONDS} seconds`}
+                  onClick={() => audioPlaybackService.skipBy(-SKIP_BACK_SECONDS)}
+                >
+                  <SkipIcon seconds={SKIP_BACK_SECONDS} direction="back" />
+                </button>
+              </div>
               <button
                 type="button"
                 className="mini-player-icon-button mini-player-play"
@@ -198,43 +255,45 @@ export const MiniPlayer: React.FC<MiniPlayerProps> = ({
               >
                 <Icon path={isPlaying ? AUDIO_ICONS.pause : AUDIO_ICONS.play} />
               </button>
-              <button
-                type="button"
-                className="mini-player-icon-button"
-                aria-label={`Forward ${SKIP_FORWARD_SECONDS} seconds`}
-                onClick={() => audioPlaybackService.skipBy(SKIP_FORWARD_SECONDS)}
-              >
-                <SkipIcon seconds={SKIP_FORWARD_SECONDS} direction="forward" />
-              </button>
-              <span className="mini-player-divider" aria-hidden="true" />
-              <button
-                type="button"
-                className="mini-player-rate"
-                aria-label="Playback speed"
-                onClick={() => audioPlaybackService.cycleRate()}
-              >
-                {formatPlaybackRate(playback.rate)}
-              </button>
-              <button
-                type="button"
-                className={`mini-player-icon-button mini-player-queue-toggle ${queueOpen ? 'is-active' : ''}`}
-                aria-label="Queue"
-                aria-expanded={queueOpen}
-                onClick={() => setQueueOpen((open) => !open)}
-              >
-                <Icon path={AUDIO_ICONS.queue} />
-                {playback.queue.length > 1 && (
-                  <span className="mini-player-badge">{playback.queue.length}</span>
-                )}
-              </button>
-              <button
-                type="button"
-                className="mini-player-icon-button"
-                aria-label="Stop and close player"
-                onClick={() => audioPlaybackService.clear()}
-              >
-                <Icon path={AUDIO_ICONS.close} />
-              </button>
+              <div className="mini-player-more mini-player-more-trail">
+                <button
+                  type="button"
+                  className="mini-player-icon-button"
+                  aria-label={`Forward ${SKIP_FORWARD_SECONDS} seconds`}
+                  onClick={() => audioPlaybackService.skipBy(SKIP_FORWARD_SECONDS)}
+                >
+                  <SkipIcon seconds={SKIP_FORWARD_SECONDS} direction="forward" />
+                </button>
+                <span className="mini-player-divider" aria-hidden="true" />
+                <button
+                  type="button"
+                  className="mini-player-rate"
+                  aria-label="Playback speed"
+                  onClick={() => audioPlaybackService.cycleRate()}
+                >
+                  {formatPlaybackRate(playback.rate)}
+                </button>
+                <button
+                  type="button"
+                  className={`mini-player-icon-button mini-player-queue-toggle ${queueOpen ? 'is-active' : ''}`}
+                  aria-label="Queue"
+                  aria-expanded={queueOpen}
+                  onClick={() => setQueueOpen((open) => !open)}
+                >
+                  <Icon path={AUDIO_ICONS.queue} />
+                  {playback.queue.length > 1 && (
+                    <span className="mini-player-badge">{playback.queue.length}</span>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  className="mini-player-icon-button"
+                  aria-label="Stop and close player"
+                  onClick={() => audioPlaybackService.clear()}
+                >
+                  <Icon path={AUDIO_ICONS.close} />
+                </button>
+              </div>
             </div>
             <span className="mini-player-progress" aria-hidden="true" style={{ width: `${progress}%` }} />
           </div>

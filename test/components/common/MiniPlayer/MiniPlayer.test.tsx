@@ -14,7 +14,32 @@ vi.mock('howler', async () => {
   };
 });
 
+// jsdom has no PointerEvent; without it fireEvent drops pointerId / clientX.
+if (typeof window.PointerEvent === 'undefined') {
+  class TestPointerEvent extends MouseEvent {
+    readonly pointerId: number;
+    constructor(type: string, init: PointerEventInit = {}) {
+      super(type, init);
+      this.pointerId = init.pointerId ?? 0;
+    }
+  }
+  window.PointerEvent = TestPointerEvent as unknown as typeof PointerEvent;
+}
+
+const overlay = vi.hoisted(() => ({
+  activeArticleHash: null as string | null,
+  articleViewOverlayPhase: 'closed' as string,
+  selectArticle: () => {},
+}));
+
+vi.mock('@/contexts/FeedContext', () => ({
+  useFeedCollectionArticles: () => ({ articles: [{ hash: 'hash-a' }, { hash: 'hash-b' }] }),
+  useFeedOverlay: () => overlay,
+}));
+
 import { MiniPlayer } from '@/components/common/MiniPlayer/MiniPlayer';
+import { MiniPlayerHost } from '@/components/common/MiniPlayer/MiniPlayerHost';
+import { MINI_PLAYER_STORAGE_KEY } from '@/components/common/MiniPlayer/useMiniPlayerDrag';
 import { audioPlaybackService } from '@/services/audio/audioPlaybackService';
 
 const first = { src: 'https://example.com/a.mp3', title: 'First episode', articleHash: 'hash-a' };
@@ -24,6 +49,9 @@ describe('MiniPlayer', () => {
   afterEach(() => {
     cleanup();
     act(() => audioPlaybackService.clear());
+    localStorage.clear();
+    overlay.activeArticleHash = null;
+    overlay.articleViewOverlayPhase = 'closed';
   });
 
   it('stays hidden until something plays', () => {
@@ -31,14 +59,191 @@ describe('MiniPlayer', () => {
     expect(screen.queryByRole('region', { name: 'Now playing' })).toBeNull();
   });
 
-  it('shows the playing episode and steps aside while its article is open', () => {
-    const { rerender } = render(<MiniPlayer hiddenForArticleHash="hash-a" />);
-    act(() => audioPlaybackService.play(first));
-    expect(screen.queryByRole('region', { name: 'Now playing' })).toBeNull();
+  it('stays on screen when an episode starts from its own open article', () => {
+    overlay.activeArticleHash = 'hash-a';
+    overlay.articleViewOverlayPhase = 'open';
+    render(<MiniPlayerHost />);
 
-    rerender(<MiniPlayer hiddenForArticleHash={null} />);
+    act(() => audioPlaybackService.play(first));
+
     expect(screen.getByRole('region', { name: 'Now playing' })).toBeTruthy();
     expect(screen.getByText('First episode')).toBeTruthy();
+  });
+
+  it('shows an episode added to the queue while nothing plays', () => {
+    render(<MiniPlayer />);
+    act(() => audioPlaybackService.enqueue(first));
+
+    expect(screen.getByRole('region', { name: 'Now playing' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Play' })).toBeTruthy();
+  });
+
+  it('drags anywhere in the window, remembers the spot and swallows the release click', () => {
+    render(<MiniPlayer />);
+    act(() => audioPlaybackService.play(first));
+    const region = screen.getByRole('region', { name: 'Now playing' });
+    const pill = region.querySelector('[data-component="mini-player-pill"]')!;
+    const toggle = screen.getByRole('button', { name: 'Pause' });
+
+    fireEvent.pointerDown(toggle, { button: 0, pointerId: 1, clientX: 500, clientY: 700 });
+    act(() => {
+      fireEvent.pointerMove(window, { pointerId: 1, clientX: 400, clientY: 400 });
+      fireEvent.pointerMove(window, { pointerId: 1, clientX: 300, clientY: 200 });
+      fireEvent.pointerUp(window, { pointerId: 1, clientX: 300, clientY: 200 });
+    });
+    fireEvent.click(toggle);
+
+    // Starts in the bottom-right corner: left = 1024 - 248 - 14 = 762.
+    expect(pill).toBeTruthy();
+    expect(region.style.left).toBe('562px');
+    expect(region.style.bottom).toBe('514px');
+    expect(region.dataset.queuePlacement).toBe('below');
+    expect(JSON.parse(localStorage.getItem(MINI_PLAYER_STORAGE_KEY)!)).toEqual({ left: 562, bottom: 514 });
+    // The click that ended the drag did not pause playback.
+    expect(audioPlaybackService.getSnapshot().status).not.toBe('paused');
+  });
+
+  it('keeps the pill inside the window and still clicks on a press without movement', () => {
+    render(<MiniPlayer />);
+    act(() => audioPlaybackService.play(first));
+    const region = screen.getByRole('region', { name: 'Now playing' });
+    const toggle = screen.getByRole('button', { name: 'Pause' });
+
+    fireEvent.pointerDown(toggle, { button: 0, pointerId: 2, clientX: 500, clientY: 700 });
+    act(() => {
+      fireEvent.pointerMove(window, { pointerId: 2, clientX: -4000, clientY: -4000 });
+      fireEvent.pointerUp(window, { pointerId: 2, clientX: -4000, clientY: -4000 });
+    });
+    expect(region.style.left).toBe('8px');
+    expect(region.style.bottom).toBe(`${window.innerHeight - 48 - 8}px`);
+
+    return new Promise<void>((resolve) => setTimeout(() => {
+      fireEvent.pointerDown(toggle, { button: 0, pointerId: 3, clientX: 10, clientY: 10 });
+      fireEvent.pointerUp(window, { pointerId: 3, clientX: 11, clientY: 10 });
+      fireEvent.click(toggle);
+      expect(audioPlaybackService.getSnapshot().status).toBe('paused');
+      resolve();
+    }, 0));
+  });
+
+  it('stays collapsed until hovered, then folds away shortly after the pointer leaves', () => {
+    vi.useFakeTimers();
+    try {
+      render(<MiniPlayer />);
+      act(() => audioPlaybackService.play(first));
+      const region = screen.getByRole('region', { name: 'Now playing' });
+      expect(region.dataset.expanded).toBe('false');
+
+      fireEvent.pointerEnter(region);
+      expect(region.dataset.expanded).toBe('true');
+
+      fireEvent.pointerLeave(region);
+      act(() => vi.advanceTimersByTime(100));
+      expect(region.dataset.expanded).toBe('true');
+      fireEvent.pointerEnter(region);
+      act(() => vi.advanceTimersByTime(500));
+      expect(region.dataset.expanded).toBe('true');
+
+      fireEvent.pointerLeave(region);
+      act(() => vi.advanceTimersByTime(300));
+      expect(region.dataset.expanded).toBe('false');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stays open while the queue is open', () => {
+    vi.useFakeTimers();
+    try {
+      render(<MiniPlayer />);
+      act(() => audioPlaybackService.play(first));
+      const region = screen.getByRole('region', { name: 'Now playing' });
+
+      fireEvent.pointerEnter(region);
+      fireEvent.click(screen.getByRole('button', { name: 'Queue' }));
+      fireEvent.pointerLeave(region);
+      act(() => vi.advanceTimersByTime(1000));
+
+      expect(region.dataset.expanded).toBe('true');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps its left edge when it spreads open and folds, so it can sit against a left border', () => {
+    vi.useFakeTimers();
+    try {
+      localStorage.setItem(MINI_PLAYER_STORAGE_KEY, JSON.stringify({ left: 8, bottom: 100 }));
+      render(<MiniPlayer />);
+      act(() => audioPlaybackService.play(first));
+      const region = screen.getByRole('region', { name: 'Now playing' });
+      expect(region.style.left).toBe('8px');
+
+      fireEvent.pointerEnter(region);
+      expect(region.dataset.expanded).toBe('true');
+      expect(region.style.left).toBe('8px');
+
+      fireEvent.pointerLeave(region);
+      act(() => vi.advanceTimersByTime(300));
+      expect(region.dataset.expanded).toBe('false');
+      expect(region.style.left).toBe('8px');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a drag ending against the left border stays there after it folds', () => {
+    vi.useFakeTimers();
+    try {
+      render(<MiniPlayer />);
+      act(() => audioPlaybackService.play(first));
+      const region = screen.getByRole('region', { name: 'Now playing' });
+      fireEvent.pointerEnter(region);
+
+      fireEvent.pointerDown(screen.getByText('First episode'), { button: 0, pointerId: 4, clientX: 700, clientY: 740 });
+      act(() => {
+        fireEvent.pointerMove(window, { pointerId: 4, clientX: -100, clientY: 740 });
+        fireEvent.pointerUp(window, { pointerId: 4, clientX: -100, clientY: 740 });
+      });
+      expect(region.style.left).toBe('8px');
+
+      fireEvent.pointerLeave(region);
+      act(() => vi.advanceTimersByTime(300));
+      expect(region.dataset.expanded).toBe('false');
+      expect(region.style.left).toBe('8px');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('spreads leftwards only when there is no room on the right, keeping its gap', () => {
+    render(<MiniPlayer />);
+    act(() => audioPlaybackService.play(first));
+    const region = screen.getByRole('region', { name: 'Now playing' });
+    // Default corner: right gap 14.
+    expect(region.style.left).toBe(`${window.innerWidth - 248 - 14}px`);
+
+    fireEvent.pointerEnter(region);
+
+    expect(region.style.left).toBe(`${window.innerWidth - 400 - 14}px`);
+  });
+
+  it('starts from the remembered spot', () => {
+    localStorage.setItem(MINI_PLAYER_STORAGE_KEY, JSON.stringify({ left: 120, bottom: 300 }));
+    render(<MiniPlayer />);
+    act(() => audioPlaybackService.play(first));
+
+    const region = screen.getByRole('region', { name: 'Now playing' });
+    expect(region.style.left).toBe('120px');
+    expect(region.style.bottom).toBe('300px');
+  });
+
+  it('reads a spot saved from the right edge by earlier test builds', () => {
+    localStorage.setItem(MINI_PLAYER_STORAGE_KEY, JSON.stringify({ right: 120, bottom: 300 }));
+    render(<MiniPlayer />);
+    act(() => audioPlaybackService.play(first));
+
+    expect(screen.getByRole('region', { name: 'Now playing' }).style.left).toBe(`${window.innerWidth - 248 - 120}px`);
   });
 
   it('lists earlier episodes and switches to one from the queue', () => {
