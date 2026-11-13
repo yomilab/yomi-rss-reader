@@ -10,6 +10,7 @@ import {
 import { readabilityAdapter } from "@/services/articles/extractors/readabilityAdapter";
 import { defuddleAdapter } from "@/services/articles/extractors/defuddleAdapter";
 import { stripHtmlToText, countWordsInHtml } from "@/services/articles/extractors/types";
+import { readParityFixture } from "./parityFixtures";
 
 const FIXTURE_URL = "https://example.com/posts/hello-world";
 
@@ -128,6 +129,50 @@ describe("extractArticleContentFromHtml dispatcher", () => {
       expect(defuddleSpy).toHaveBeenCalledTimes(1);
       expect(readabilitySpy).toHaveBeenCalledTimes(1);
       expect(result).not.toBeNull();
+    } finally {
+      defuddleSpy.mockRestore();
+      readabilitySpy.mockRestore();
+    }
+  });
+
+  it("falls back when the primary adapter returns content with no words", async () => {
+    const emptyResult = await defuddleAdapter.extract(FIXTURE_URL, FIXTURE_HTML);
+    const defuddleSpy = vi
+      .spyOn(defuddleAdapter, "extract")
+      .mockResolvedValueOnce({ ...emptyResult!, content: "<body></body>", wordCount: 0 });
+    const readabilitySpy = vi.spyOn(readabilityAdapter, "extract");
+
+    try {
+      const result = await extractArticleContentFromHtml(FIXTURE_URL, FIXTURE_HTML, "defuddle");
+      expect(defuddleSpy).toHaveBeenCalledTimes(1);
+      expect(readabilitySpy).toHaveBeenCalledTimes(1);
+      expect(countWordsInHtml(result?.content)).toBeGreaterThan(10);
+    } finally {
+      defuddleSpy.mockRestore();
+      readabilitySpy.mockRestore();
+    }
+  });
+
+  it("falls back to readability when defuddle only returns a Next.js data script", async () => {
+    // KiJi's Defuddle extracts this Longbridge page, but under other DOMs it returns only
+    // the page's `__NEXT_DATA__` blob; simulate that output and expect Readability to take over.
+    const html = readParityFixture("parsingHtml.html");
+    const url = "https://longbridge.com/en/news/275549034";
+    const realResult = await defuddleAdapter.extract(url, html);
+    const defuddleSpy = vi.spyOn(defuddleAdapter, "extract").mockResolvedValueOnce({
+      ...realResult!,
+      content: '<script type="application/json" id="__NEXT_DATA__">{"props":{"pageProps":{"title":"Budget 2026"}}}</script>',
+      wordCount: 0,
+    });
+    const readabilitySpy = vi.spyOn(readabilityAdapter, "extract");
+
+    try {
+      const result = await extractArticleContentFromHtml(url, html, "defuddle");
+      expect(defuddleSpy).toHaveBeenCalledTimes(1);
+      expect(readabilitySpy).toHaveBeenCalledTimes(1);
+      expect(result).not.toBeNull();
+      expect(result!.content).not.toContain("<script");
+      expect(countWordsInHtml(result!.content)).toBeGreaterThan(0);
     } finally {
       defuddleSpy.mockRestore();
       readabilitySpy.mockRestore();

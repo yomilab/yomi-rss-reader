@@ -11,6 +11,7 @@ const mockClearArticleListSearch = vi.fn();
 const mockSelectArticle = vi.fn();
 const mockSetActiveArticle = vi.fn();
 let mockArticlesTotalCount = 100;
+let mockActiveArticleHash: string | null = null;
 const mockSearchState = {
   searchQuery: '',
   debouncedSearchQuery: '',
@@ -81,7 +82,7 @@ vi.mock('@/contexts/FeedContext', () => {
       syncArticleListViewport: vi.fn(),
     }),
     useFeedOverlay: (): unknown => ({
-      activeArticleHash: null,
+      activeArticleHash: mockActiveArticleHash,
       selectArticle: mockSelectArticle,
       setActiveArticle: mockSetActiveArticle,
       articleViewOverlayPhase: 'closed',
@@ -152,6 +153,7 @@ describe('SharedArticleList virtualization', () => {
     mockSearchState.debouncedSearchQuery = '';
     mockSearchState.isSearchOpen = false;
     mockArticlesTotalCount = 100;
+    mockActiveArticleHash = null;
     mockSearchCurrentSource.mockClear();
     mockClearArticleListSearch.mockClear();
   });
@@ -170,6 +172,34 @@ describe('SharedArticleList virtualization', () => {
     })),
     scrollToIndex: vi.fn(),
     measureElement: vi.fn(),
+  });
+
+  it('puts the active highlight block behind the active row, even before that row mounts', () => {
+    mockActiveArticleHash = 'hash-50';
+    mockUseVirtualizer.mockReturnValue({
+      ...makeVirtualizerMock(),
+      measurementsCache: Array.from({ length: 100 }, (_, index) => ({ index, start: index * 100, size: 100 })),
+    });
+
+    const { container } = renderSharedArticleList();
+    const spacer = container.querySelector('.article-list-virtual-spacer') as HTMLElement;
+    const block = spacer.querySelector('[data-section="article-list-active-highlight"]') as HTMLElement;
+
+    expect(block).not.toBeNull();
+    // First in the spacer, so the rows paint over it.
+    expect(spacer.firstElementChild).toBe(block);
+    expect(block.style.transform).toContain('translateY(5000px)');
+    expect(block.style.height).toBe('98px');
+    expect(block.style.opacity).toBe('1');
+  });
+
+  it('hides the active highlight block when no row is active', () => {
+    mockUseVirtualizer.mockReturnValue(makeVirtualizerMock());
+
+    const { container } = renderSharedArticleList();
+    const block = container.querySelector('[data-section="article-list-active-highlight"]') as HTMLElement;
+
+    expect(block.style.opacity).toBe('0');
   });
 
   it('renders only virtualized rows instead of the full list', () => {

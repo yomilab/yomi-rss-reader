@@ -91,6 +91,18 @@
   --sidebar-selected-bg: color-mix(in srgb, var(--system-accent-color) 14%, transparent);
   --sidebar-selected-color: color-mix(in srgb, var(--system-accent-color) 30%, var(--theme-primary-color));
 
+  /* Article-list active highlight (R-07): the gliding block and the text on
+     it. Same idea as the sidebar row: tint with the accent, and pull the text
+     toward the accent while keeping it dark enough (>= 4.5:1 for every macOS
+     accent and every reader theme; test/styles/articleListActiveContrast.test.ts). */
+  --article-list-active-bg: color-mix(in srgb, var(--system-accent-color) 14%, transparent);
+  --article-list-active-edge: color-mix(in srgb, var(--system-accent-color) 22%, transparent);
+  --article-list-active-color: color-mix(in srgb, var(--system-accent-color) 30%, var(--theme-primary-color));
+  /* Secondary text starts halfway between the soft ink and the ink: the soft
+     ink alone drops under 4.5:1 on the tint in several reader themes. */
+  --article-list-active-ink-soft: color-mix(in srgb, var(--theme-text-secondary) 50%, var(--theme-primary-color));
+  --article-list-active-secondary-color: color-mix(in srgb, var(--system-accent-color) 15%, var(--article-list-active-ink-soft));
+
   /* Article-list favicon chip: a light card in light mode; dark mode needs the
      lighter gray chip so dark logos stay visible. */
   --article-list-favicon-chip-bg: #FFFFFF;
@@ -165,6 +177,13 @@ html[data-os="other"] {
 
   --sidebar-selected-bg: var(--theme-hover-overlay-dark);
   --sidebar-selected-color: var(--system-accent-color);
+  /* Dark: the title mixes toward the light ink so dark accents such as blue
+     still read on the block. */
+  --article-list-active-bg: color-mix(in srgb, var(--system-accent-color) 16%, transparent);
+  --article-list-active-edge: color-mix(in srgb, var(--system-accent-color) 26%, transparent);
+  --article-list-active-color: color-mix(in srgb, var(--system-accent-color) 45%, var(--theme-primary-color));
+  --article-list-active-ink-soft: color-mix(in srgb, var(--theme-text-secondary) 40%, var(--theme-primary-color));
+  --article-list-active-secondary-color: color-mix(in srgb, var(--system-accent-color) 12%, var(--article-list-active-ink-soft));
   --article-list-favicon-chip-bg: color-mix(in srgb, var(--theme-text-primary) 45%, var(--theme-article-bg));
   --article-list-favicon-chip-ring: transparent;
 

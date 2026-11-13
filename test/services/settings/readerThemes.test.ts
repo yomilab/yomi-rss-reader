@@ -35,6 +35,19 @@ describe("reader theme registry", () => {
   it("defaults to the built-in Yomi Reader palette", () => {
     expect(DEFAULT_SETTINGS.readerTheme).toBe("default");
   });
+
+  it("offers Ivory, the portals' ivory look, right after Paper", () => {
+    const ids = READER_THEMES.map((theme) => theme.id);
+    expect(ids.indexOf("ivory")).toBe(ids.indexOf("paper") + 1);
+    const ivory = findReaderTheme("ivory")!;
+    expect(ivory.label).toBe("Ivory");
+    // The portal reads in Charter at 1.6 line height (`.pt-prose` in portal-theme).
+    expect(ivory.titleFont).toBe(FontStack.READER_CHARTER);
+    expect(ivory.bodyFont).toBe(FontStack.READER_CHARTER);
+    expect(ivory.contentFontWeight).toBe(400);
+    expect(ivory.contentLineHeight).toBe(1.6);
+    expect(normalizeReaderTheme("ivory")).toBe("ivory");
+  });
 });
 
 describe("normalizeReaderTheme", () => {
