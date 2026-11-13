@@ -4,6 +4,10 @@ export interface ShortcutKeyboardEvent {
   ctrlKey: boolean;
   altKey: boolean;
   shiftKey: boolean;
+  /** True while an input method (IME) is still composing text. */
+  isComposing?: boolean;
+  /** WebKit reports 229 for the key that ends an IME composition. */
+  keyCode?: number;
 }
 
 export type KeybindingEventType = 'keydown' | 'keyup';
@@ -113,6 +117,8 @@ export const keybindingService = new KeybindingService();
 const isPrimaryModifierPressed = (event: ShortcutKeyboardEvent): boolean => event.metaKey || event.ctrlKey;
 const isPlainKeyPress = (event: ShortcutKeyboardEvent): boolean => !event.metaKey && !event.ctrlKey && !event.altKey;
 const normalizedKey = (event: ShortcutKeyboardEvent): string => event.key.toLowerCase();
+const isImeComposing = (event: ShortcutKeyboardEvent): boolean =>
+  event.isComposing === true || event.keyCode === 229;
 const hasModalOpen = (): boolean =>
   typeof document !== 'undefined' && document.querySelector('.modal-backdrop') !== null;
 const hasArticleViewOpen = (): boolean => {
@@ -144,6 +150,7 @@ export const SHORTCUT_LABELS = {
   SEARCH_ARTICLES: 'Cmd + F',
   COMMAND_PALETTE: 'Cmd + K',
   OPEN_SETTINGS: 'Cmd + ,',
+  OPEN_ARTICLE: '→ / Enter',
   OPEN_ARTICLE_IN_NEW_WINDOW: 'N',
   CLOSE_ARTICLE_VIEW: 'Esc',
   SAVE_ARTICLE: 'S',
@@ -231,8 +238,12 @@ export const isOpenCommandPaletteShortcut = (event: ShortcutKeyboardEvent): bool
 export const isArticleListSearchShortcut = (event: ShortcutKeyboardEvent): boolean =>
   isAppShortcutLayerActive() && isPrimaryModifierPressed(event) && normalizedKey(event) === 'f';
 
-export const isOpenArticleShortcut = (event: ShortcutKeyboardEvent): boolean =>
-  isAppShortcutLayerActive() && event.key === 'ArrowRight';
+/** Right arrow or a plain Enter (not one that ends an IME composition). */
+export const isOpenArticleShortcut = (event: ShortcutKeyboardEvent): boolean => {
+  if (!isAppShortcutLayerActive()) return false;
+  if (event.key === 'ArrowRight') return true;
+  return event.key === 'Enter' && isPlainKeyPress(event) && !event.shiftKey && !isImeComposing(event);
+};
 
 export const isScrollDownShortcut = (event: ShortcutKeyboardEvent): boolean => {
   if (!isAppShortcutLayerActive()) return false;
