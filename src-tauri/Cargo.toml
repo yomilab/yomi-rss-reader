@@ -1,6 +1,6 @@
 [package]
 name = "kiji-app"
-version = "2.0.1"
+version = "2.1.0"
 description = "Yomi Reader desktop app built with Tauri."
 authors = ["Yomi Lab"]
 license = "GPL-3.0-or-later"

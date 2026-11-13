@@ -4,22 +4,23 @@
 
 ## Unreleased
 
+## [2.1.0] - 2026-11-13
+
 ### Added
 
-- In the article list, Enter now opens the highlighted article, just like the Right arrow key.
-- You can drag the podcast player anywhere in the window. It stays where you leave it.
-- The podcast player is smaller: it shows the episode and play/pause, and opens up to all its controls when you hover over it.
+- New Ivory reader theme.
+- A highlight glides to the open article in the list.
+- Enter opens the highlighted article.
 
-### Fixed
+### Changed
 
-- The podcast player at the bottom no longer disappears when you play an episode in the article you're reading.
-- You can add an episode to the player's queue from the article, even when nothing is playing yet.
-
-## [2.0.1] - 2026-11-06
+- The podcast mini player stays up, can queue episodes from the article, and can be dragged.
+- The podcast mini player is smaller and opens up to all its controls when you hover over it.
 
 ### Fixed
 
 - When a site blocks the full article, reader mode now shows the feed's version with an Open in Browser button.
+- Reader mode no longer comes up blank on some news sites.
 - Wide images in articles keep their shape.
 - The open article keeps a thin outline in the list, including when you move with the keyboard.
 - The episode player keeps its full width while an article loads.
