@@ -4,6 +4,16 @@
 
 ## Unreleased
 
+## [2.2.0] - 2026-11-20
+
+### Added
+
+- Use ← or H to reach the sidebar, J or K to move the highlight between sources, Enter to open one, and → or L to return to the article list.
+
+### Changed
+
+- Circle is now the default icon for Yomi Reader and its Claude Desktop extension, and the app keeps your existing icon choice.
+
 ## [2.1.0] - 2026-11-13
 
 ### Added
