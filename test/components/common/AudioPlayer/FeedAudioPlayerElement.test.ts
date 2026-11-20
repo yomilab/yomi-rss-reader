@@ -30,6 +30,10 @@ function playButton(player: HTMLElement): HTMLButtonElement {
   return player.shadowRoot!.querySelector('.play') as HTMLButtonElement;
 }
 
+function queueButton(player: HTMLElement): HTMLButtonElement {
+  return player.shadowRoot!.querySelector('.queue') as HTMLButtonElement;
+}
+
 describe('feed-audio-player', () => {
   afterEach(() => {
     audioPlaybackService.clear();
@@ -50,6 +54,28 @@ describe('feed-audio-player', () => {
       title: 'Episode One',
       subtitle: 'Example Show',
     });
+  });
+
+  it('adds the episode to the queue even when nothing is playing yet', () => {
+    const player = mountPlayer();
+    expect(queueButton(player).hidden).toBe(false);
+
+    queueButton(player).click();
+
+    expect(audioPlaybackService.isQueued(SRC)).toBe(true);
+    expect(audioPlaybackService.getSnapshot()).toMatchObject({ currentId: SRC, status: 'paused' });
+  });
+
+  it('adds a second episode under the one that is playing', () => {
+    const other = 'https://example.com/other.mp3';
+    audioPlaybackService.play({ src: other, title: 'Other episode' });
+
+    const player = mountPlayer();
+    queueButton(player).click();
+
+    expect(audioPlaybackService.getSnapshot().currentId).toBe(other);
+    expect(audioPlaybackService.getSnapshot().queue.map((track) => track.src)).toEqual([other, SRC]);
+    expect(queueButton(player).getAttribute('aria-label')).toBe('Remove from queue');
   });
 
   it('a re-opened article reflects the episode that is already playing', () => {

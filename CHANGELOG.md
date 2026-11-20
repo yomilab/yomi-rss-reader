@@ -1,12 +1,26 @@
 # Changelog
 
+<!-- New notes go in changes/, one file per PR (see changes/README.md). Leave ## Unreleased empty. -->
+
 ## Unreleased
 
-## [2.0.1] - 2026-11-06
+## [2.1.0] - 2026-11-13
+
+### Added
+
+- New Ivory reader theme.
+- A highlight glides to the open article in the list.
+- Enter opens the highlighted article.
+
+### Changed
+
+- The podcast mini player stays up, can queue episodes from the article, and can be dragged.
+- The podcast mini player is smaller and opens up to all its controls when you hover over it.
 
 ### Fixed
 
 - When a site blocks the full article, reader mode now shows the feed's version with an Open in Browser button.
+- Reader mode no longer comes up blank on some news sites.
 - Wide images in articles keep their shape.
 - The open article keeps a thin outline in the list, including when you move with the keyboard.
 - The episode player keeps its full width while an article loads.
