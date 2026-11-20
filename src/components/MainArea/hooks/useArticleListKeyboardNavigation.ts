@@ -15,6 +15,7 @@ import {
 import { animateElementScrollTop, getScrollableBottom } from '@/utils/fixedTimeScroll';
 import { recordRobustnessEvent } from '@/services/diagnostics/robustnessMetrics';
 import { resolveArticleListFocusHash, resolveArticleListFocusIndex } from '../articleListKeyboardFocus';
+import { focusSidebarSelection, isFocusSidebarKey, sidebarVimStep } from '@/components/Sidebar/sidebarKeyboardNav';
 
 interface UseArticleListKeyboardNavigationOptions {
   articleListRef: RefObject<HTMLDivElement>;
@@ -96,14 +97,13 @@ export const useArticleListKeyboardNavigation = ({
 
     const isArticleListCovered = (): boolean => articleViewOverlayPhaseRef.current !== 'closed';
 
-    // Keys a focused control handles itself: Space / Enter press a button
-    // (toast Undo, sidebar actions) and the arrows / Space / Enter move within
-    // the sidebar.
+    // Let focused controls handle activation and their own navigation keys.
     const isOwnedByFocusedControl = (e: KeyboardEvent): boolean => {
       if (!(e.target instanceof Element)) return false;
       const isPress = e.key === ' ' || e.code === 'Space' || e.key === 'Enter';
       if (e.target.closest('[data-sidebar-nav-item]')) {
-        return isPress || e.key.startsWith('Arrow') || e.key === 'Home' || e.key === 'End';
+        return isPress || e.key.startsWith('Arrow') || e.key === 'Home' || e.key === 'End'
+          || sidebarVimStep(e) !== 0 || e.key === 'h' || e.key === 'l';
       }
       return isPress && e.target.closest('button, a[href], [role="button"], [role="link"], summary') !== null;
     };
@@ -310,6 +310,15 @@ export const useArticleListKeyboardNavigation = ({
       if (isOwnedByFocusedControl(e)) return;
 
       if (handleVimScrollShortcut(e)) return;
+
+      // ← (or h) moves focus to the sidebar's selected source (R-08).
+      if (isFocusSidebarKey(e) && getShortcutPriorityLayer() !== 'modal') {
+        if (focusSidebarSelection()) {
+          e.preventDefault();
+          resetHold();
+        }
+        return;
+      }
 
       if (isOpenArticleShortcut(e)) {
         // A focused row opens itself on Enter (and prevents default); opening

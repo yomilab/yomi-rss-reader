@@ -10,15 +10,77 @@ export function listSidebarNavItems(container: ParentNode): HTMLElement[] {
   );
 }
 
+const isPlain = (event: Pick<KeyboardEvent, 'metaKey' | 'ctrlKey' | 'altKey' | 'shiftKey'>): boolean =>
+  !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey;
+
+/** ← or h (vim): from the article list to the sidebar. */
+export function isFocusSidebarKey(
+  event: Pick<KeyboardEvent, 'key' | 'metaKey' | 'ctrlKey' | 'altKey' | 'shiftKey'>,
+): boolean {
+  return isPlain(event) && (event.key === 'ArrowLeft' || event.key === 'h');
+}
+
+/** → or l (vim): from the sidebar back to the article list. */
+export function isFocusArticleListKey(
+  event: Pick<KeyboardEvent, 'key' | 'metaKey' | 'ctrlKey' | 'altKey' | 'shiftKey'>,
+): boolean {
+  return isPlain(event) && (event.key === 'ArrowRight' || event.key === 'l');
+}
+
+/**
+ * Move keyboard focus from the sidebar back to the article list: the row that
+ * holds the list's Tab stop (the highlighted row, else the first row).
+ * Returns false when the list has no rows.
+ */
+export function focusArticleListRow(root: ParentNode = document): boolean {
+  const row = root.querySelector<HTMLElement>(
+    '[data-section="article-list-items"] .article-list-item[data-entity-id][tabindex="0"]',
+  );
+  if (!row) return false;
+  row.focus();
+  return true;
+}
+
+/** j / k move like Down / Up (vim), only as plain presses. */
+export function sidebarVimStep(
+  event: Pick<KeyboardEvent, 'key' | 'metaKey' | 'ctrlKey' | 'altKey' | 'shiftKey'>,
+): 1 | -1 | 0 {
+  if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return 0;
+  if (event.key === 'j') return 1;
+  if (event.key === 'k') return -1;
+  return 0;
+}
+
+/**
+ * Move keyboard focus from the article list to the sidebar (← in the list):
+ * the selected source, else the row that holds the sidebar's Tab stop, else
+ * the first reachable row. Returns false when the sidebar has no reachable
+ * row (hidden, or every section folded), so the key is left alone.
+ */
+export function focusSidebarSelection(root: ParentNode = document): boolean {
+  const nav = root.querySelector<HTMLElement>('[data-component="sidebar-nav"]');
+  if (!nav) return false;
+  const items = listSidebarNavItems(nav);
+  const target = items.find((item) => item.getAttribute('aria-current') === 'page')
+    ?? items.find((item) => item.tabIndex === 0)
+    ?? items[0];
+  if (!target) return false;
+  target.focus();
+  return true;
+}
+
 /**
  * Source list keys (one Tab stop, arrows move between rows, like a macOS
- * source list): Up/Down, Home/End move focus; Enter/Space select the row.
+ * source list): Up/Down (or j/k), Home/End move focus; Enter/Space select the
+ * row; Right (or l) goes back to the article list. Moving never selects a
+ * source or folds/unfolds a station: only Enter/Space (or a click) select.
  * Returns true when the key was handled.
  */
 export function handleSidebarNavKeyDown(
-  event: Pick<KeyboardEvent, 'key' | 'target' | 'metaKey' | 'ctrlKey' | 'altKey' | 'preventDefault'>,
+  event: Pick<KeyboardEvent, 'key' | 'target' | 'metaKey' | 'ctrlKey' | 'altKey' | 'shiftKey' | 'preventDefault'>,
   container: ParentNode,
 ): boolean {
+  const vimStep = sidebarVimStep(event);
   if (event.metaKey || event.ctrlKey || event.altKey) return false;
   const target = event.target;
   if (!(target instanceof HTMLElement) || !target.matches(NAV_ITEM_SELECTOR)) return false;
@@ -29,13 +91,19 @@ export function handleSidebarNavKeyDown(
     return true;
   }
 
+  if (isFocusArticleListKey(event)) {
+    if (!focusArticleListRow()) return false;
+    event.preventDefault();
+    return true;
+  }
+
   const items = listSidebarNavItems(container);
   const index = items.indexOf(target);
   if (index === -1) return false;
 
   let next: HTMLElement | undefined;
-  if (event.key === 'ArrowDown') next = items[index + 1];
-  else if (event.key === 'ArrowUp') next = items[index - 1];
+  if (event.key === 'ArrowDown' || vimStep === 1) next = items[index + 1];
+  else if (event.key === 'ArrowUp' || vimStep === -1) next = items[index - 1];
   else if (event.key === 'Home') next = items[0];
   else if (event.key === 'End') next = items[items.length - 1];
   else return false;

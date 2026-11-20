@@ -224,13 +224,6 @@ const StationListItem = React.memo<StationListItemProps>(({
           aria-expanded={isExpanded}
           aria-label={tag.name}
           data-sidebar-nav-item=""
-          onKeyDown={(event) => {
-            // Source-list convention: Right opens a station's feeds, Left folds them.
-            if ((event.key === 'ArrowRight' && !isExpanded) || (event.key === 'ArrowLeft' && isExpanded)) {
-              event.preventDefault();
-              onToggleStation(tag.name);
-            }
-          }}
         >
           {tag.emoji ? (
             <span className="tag-item-emoji" aria-hidden="true">{tag.emoji}</span>

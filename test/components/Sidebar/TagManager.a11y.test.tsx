@@ -38,7 +38,7 @@ import { TagManager } from '@/components/Sidebar/TagManager';
 afterEach(cleanup);
 
 describe('station rows', () => {
-  it('expose selection and fold state; Right / Left open and fold a station', async () => {
+  it('expose selection and fold state; arrows never fold, unfold or select a station', async () => {
     const { container } = render(<TagManager />);
     const tech = await screen.findByRole('button', { name: 'Tech' });
     const daily = screen.getByRole('button', { name: 'Daily' });
@@ -47,10 +47,13 @@ describe('station rows', () => {
     expect(daily.tabIndex).toBe(-1);
     expect(daily.getAttribute('aria-expanded')).toBe('false');
 
-    fireEvent.keyDown(daily, { key: 'ArrowRight' });
-    expect(daily.getAttribute('aria-expanded')).toBe('true');
-    fireEvent.keyDown(daily, { key: 'ArrowLeft' });
-    expect(daily.getAttribute('aria-expanded')).toBe('false');
+    // Owner, 2026-11-08: moving onto a station must not open or select it;
+    // only Enter selects, and → goes back to the article list.
+    for (const key of ['ArrowRight', 'ArrowLeft', 'ArrowDown', 'ArrowUp', 'j', 'k']) {
+      fireEvent.keyDown(daily, { key });
+      expect(daily.getAttribute('aria-expanded'), key).toBe('false');
+      expect(daily.getAttribute('aria-current'), key).toBeNull();
+    }
 
     expect(await findSeriousAxeViolations(container)).toEqual([]);
   });

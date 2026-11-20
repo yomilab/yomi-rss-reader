@@ -30,8 +30,7 @@
 }
 
 .smart-view-item.is-selected {
-  background-color: var(--sidebar-selected-bg);
-  color: var(--sidebar-selected-color);
+  /* Tint and text color come from the gliding highlight (Sidebar.css). */
   font-weight: 600;
   border-radius: 4px;
 }

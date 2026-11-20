@@ -55,8 +55,7 @@
 }
 
 .feed-list-item-selected {
-  background-color: var(--sidebar-selected-bg);
-  color: var(--sidebar-selected-color);
+  /* Tint and text color come from the gliding highlight (Sidebar.css). */
   border-radius: 4px;
 }
 
