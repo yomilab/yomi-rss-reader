@@ -119,9 +119,24 @@ export class AudioPlaybackService {
     this.load(track.id, true);
   }
 
-  /** Add a track to the end of the queue without interrupting playback. */
+  /**
+   * Add a track to the end of the queue without interrupting playback. With
+   * nothing playing it becomes the paused current track, so the mini player
+   * appears and one click starts it.
+   */
   enqueue(input: AudioTrackInput): void {
-    this.upsert(toTrack(input));
+    const track = toTrack(input);
+    this.upsert(track);
+    if (this.snapshot.currentId) return;
+    const duration = this.durations.get(track.id) ?? track.durationHint ?? 0;
+    this.update({
+      currentId: track.id,
+      status: 'paused',
+      position: this.positions.get(track.id) ?? 0,
+      duration,
+      failed: false,
+    });
+    this.syncMediaSession();
   }
 
   isQueued(id: string): boolean {

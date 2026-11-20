@@ -60,6 +60,20 @@ describe('audioPlaybackService', () => {
     expect(service.isQueued(episode(2).src)).toBe(true);
   });
 
+  it('enqueue while idle makes the episode current and paused without loading it', () => {
+    const { factory, sounds } = createFakeSoundFactory();
+    const service = new AudioPlaybackService(factory);
+
+    service.enqueue({ ...episode(1), durationHint: 600 });
+
+    expect(service.getSnapshot()).toMatchObject({ currentId: episode(1).src, status: 'paused', duration: 600 });
+    expect(sounds).toHaveLength(0);
+
+    service.toggle();
+    expect(sounds).toHaveLength(1);
+    expect(sounds[0].isPlaying).toBe(true);
+  });
+
   it('removing the playing episode continues with the next one', () => {
     const { factory } = createFakeSoundFactory();
     const service = new AudioPlaybackService(factory);

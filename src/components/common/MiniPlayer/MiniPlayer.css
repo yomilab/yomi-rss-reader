@@ -1,5 +1,8 @@
-/* Floating "now playing" pill: bottom-right, one row tall, so it never covers
-   more than a corner of the article list or article view. */
+/* Floating "now playing" pill, one row tall. It starts bottom-right and the
+   user can drag it anywhere; `left` / `bottom` come from useMiniPlayerDrag,
+   so spreading open grows it rightwards from a fixed left edge.
+   Collapsed it shows the episode and play/pause; on hover it spreads out to
+   the full controls. Widths match MINI_PLAYER_*_WIDTH in useMiniPlayerDrag. */
 .mini-player {
   --mini-player-accent: var(--theme-primary, var(--system-accent-color, #3273dc));
   --mini-player-surface: color-mix(in srgb, var(--theme-background) 78%, transparent);
@@ -7,16 +10,18 @@
   --mini-player-hover: color-mix(in srgb, var(--theme-text-primary) 8%, transparent);
 
   position: fixed;
-  right: 14px;
+  left: calc(100vw - min(248px, calc(100vw - 28px)) - 14px);
   bottom: 14px;
   z-index: 20;
-  width: min(400px, calc(100vw - 28px));
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+  width: min(248px, calc(100vw - 28px));
+  transition: width 0.22s cubic-bezier(0.22, 0.61, 0.36, 1), left 0.22s cubic-bezier(0.22, 0.61, 0.36, 1);
   color: var(--theme-text-primary);
   font-family: var(--font-family-ui, system-ui, sans-serif);
 }
+
+.mini-player[data-expanded="true"] { width: min(400px, calc(100vw - 28px)); }
+/* The pill follows the pointer directly while dragged. */
+.mini-player[data-dragging="true"] { transition: width 0.22s cubic-bezier(0.22, 0.61, 0.36, 1); }
 
 .mini-player-pill,
 .mini-player-queue {
@@ -39,7 +44,15 @@
   border-radius: 14px;
   overflow: hidden;
   box-sizing: border-box;
+  cursor: grab;
+  touch-action: none;
+  -webkit-app-region: no-drag;
 }
+
+.mini-player[data-dragging="true"] .mini-player-pill { cursor: grabbing; }
+.mini-player[data-dragging="true"],
+.mini-player[data-dragging="true"] * { user-select: none; -webkit-user-select: none; }
+.mini-player[data-dragging="true"] .mini-player-pill { box-shadow: 0 16px 40px color-mix(in srgb, var(--theme-shadow, rgba(0, 0, 0, 0.2)) 90%, transparent); }
 
 .mini-player-progress {
   position: absolute;
@@ -123,6 +136,34 @@
   gap: 1px;
 }
 
+/* Controls that fold away while collapsed. visibility keeps them out of the
+   tab order and away from screen readers until the pill is open. */
+.mini-player-more {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  overflow: hidden;
+  max-width: 0;
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    max-width 0.22s cubic-bezier(0.22, 0.61, 0.36, 1),
+    opacity 0.12s ease,
+    visibility 0s linear 0.22s;
+}
+
+.mini-player[data-expanded="true"] .mini-player-more {
+  opacity: 1;
+  visibility: visible;
+  transition:
+    max-width 0.22s cubic-bezier(0.22, 0.61, 0.36, 1),
+    opacity 0.18s ease 0.06s,
+    visibility 0s;
+}
+
+.mini-player[data-expanded="true"] .mini-player-more-lead { max-width: 30px; }
+.mini-player[data-expanded="true"] .mini-player-more-trail { max-width: 160px; }
+
 .mini-player-icon-button {
   position: relative;
   display: inline-flex;
@@ -191,13 +232,24 @@
   background: var(--mini-player-accent);
 }
 
-/* Queue popover above the pill. */
+/* Queue popover above the pill, or below it when the pill sits near the top.
+   max-height comes from useMiniPlayerDrag so it always fits the window. */
 .mini-player-queue {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 8px);
   border-radius: 14px;
   padding: 6px;
-  max-height: min(320px, calc(100vh - 120px));
+  box-sizing: border-box;
+  max-height: 320px;
   display: flex;
   flex-direction: column;
+}
+
+.mini-player[data-queue-placement="below"] .mini-player-queue {
+  top: calc(100% + 8px);
+  bottom: auto;
 }
 
 .mini-player-queue-header {
@@ -263,5 +315,7 @@
 .mini-player-queue-remove svg { width: 15px; height: 15px; }
 
 @media (prefers-reduced-motion: reduce) {
-  .mini-player-progress { transition: none; }
+  .mini-player-progress,
+  .mini-player,
+  .mini-player-more { transition: none !important; }
 }

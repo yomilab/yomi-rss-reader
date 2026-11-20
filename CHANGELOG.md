@@ -1,16 +1,30 @@
 # Changelog
 
+<!-- New notes go in changes/, one file per PR (see changes/README.md). Leave ## Unreleased empty. -->
+
 ## Unreleased
+
+## [2.1.0] - 2026-11-13
+
+### Added
+
+- New Ivory reader theme.
+- A highlight glides to the open article in the list.
+- Enter opens the highlighted article.
 
 ### Changed
 
-- **Circle** is now the default app icon, and the Claude Desktop extension from Settings → Assistant shows it too instead of the old tile with blue bars. If you already picked an icon in Settings → Appearance, you keep it, and Ripple is still in the list.
+- The podcast mini player stays up, can queue episodes from the article, and can be dragged.
+- The podcast mini player is smaller and opens up to all its controls when you hover over it.
 
 ### Fixed
 
-- When a site won't let Yomi Reader load the full article, reader mode now shows the version from the feed with an Open in Browser button, instead of a bare error. If a site can't be reached, Yomi Reader tries once more on its own and offers Try again.
-- The article you have open now keeps a thin outline inside its row in the list, instead of showing one only now and then. Moving through the list with the keyboard shows the same thin outline in your accent color, replacing the thicker ring.
-- The episode player keeps its full width while an article is loading, instead of getting squeezed until the text appears.
+- When a site blocks the full article, reader mode now shows the feed's version with an Open in Browser button.
+- Reader mode no longer comes up blank on some news sites.
+- Wide images in articles keep their shape.
+- The open article keeps a thin outline in the list, including when you move with the keyboard.
+- The episode player keeps its full width while an article loads.
+- Security updates for zip files and secure connections.
 
 ## [2.0.0] - 2026-11-05
 

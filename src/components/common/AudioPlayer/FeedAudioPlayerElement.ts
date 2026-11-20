@@ -306,7 +306,7 @@ class FeedAudioPlayerElement extends HTMLElement {
       </div>
       <div class="aside">
         <button class="rate" type="button" aria-label="Playback speed"></button>
-        <button class="queue" type="button" aria-label="Play later" aria-pressed="false">${iconSvg(AUDIO_ICONS.playlistAdd)}</button>
+        <button class="queue" type="button" aria-label="Add to queue" aria-pressed="false">${iconSvg(AUDIO_ICONS.playlistAdd)}</button>
       </div>
       <div class="transport">
         <button class="back" type="button" aria-label="Back ${SKIP_BACK_SECONDS} seconds">${skipIconSvg(SKIP_BACK_SECONDS, 'back')}</button>
@@ -475,11 +475,12 @@ class FeedAudioPlayerElement extends HTMLElement {
     this.rateBtn.textContent = formatPlaybackRate(snapshot.rate);
     this.rateBtn.dataset.active = String(snapshot.rate !== 1);
 
-    // "Play later" only makes sense while something else is playing.
+    // The current episode is already in the mini player's list.
     const queued = !!src && audioPlaybackService.isQueued(src);
-    this.queueBtn.hidden = current || !snapshot.currentId;
+    this.queueBtn.hidden = current;
     this.queueBtn.setAttribute('aria-pressed', String(queued));
-    this.queueBtn.setAttribute('aria-label', queued ? 'Remove from queue' : 'Play later');
+    this.queueBtn.setAttribute('aria-label', queued ? 'Remove from queue' : 'Add to queue');
+    this.queueBtn.title = queued ? 'Remove from queue' : 'Add to queue';
     this.queueBtn.innerHTML = iconSvg(queued ? AUDIO_ICONS.playlistAdded : AUDIO_ICONS.playlistAdd);
 
     this.errorEl.hidden = !(current && snapshot.failed);
