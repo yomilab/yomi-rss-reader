@@ -32,12 +32,19 @@ export const ROBUSTNESS_COUNTER_KEYS = [
   'ui.keyboardHoldReset',
   'ui.deleteFlowPartialFailure',
   'assistant.libraryChangeFailed',
+  'sidebarSwitch.coldInitialFetchHold',
+  'sidebarSwitch.emptyWithoutRows',
+  'sidebarSwitch.cancelledDuringInitialFetch',
 ] as const;
 
 export const ROBUSTNESS_DURATION_KEYS = [
   'scheduler.stationPauseHeldMs',
   'paintGate.waitMs',
   'sidebarFavicons.batchMs',
+  'sidebarSwitch.interactiveMs',
+  'sidebarSwitch.sqlitePageMs',
+  'sidebarSwitch.skeletonVisibleMs',
+  'sidebarSwitch.initialFetchWaitMs',
 ] as const;
 
 export type RobustnessCounterKey = typeof ROBUSTNESS_COUNTER_KEYS[number];

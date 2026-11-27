@@ -360,7 +360,7 @@
   color: var(--rt-ink-soft);
 }
 
-:root[data-reader-theme] .article-list-items {
+:root[data-reader-theme] .article-list {
   --article-list-skeleton-bg: color-mix(in srgb, var(--rt-ink) 10%, transparent);
   --article-list-skeleton-shimmer-mid: color-mix(in srgb, var(--rt-page) 60%, transparent);
 }

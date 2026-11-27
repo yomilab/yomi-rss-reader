@@ -17,7 +17,15 @@ import {
   resolveDeferredPageTotal,
 } from '@/services/articles/articleListTotal';
 import * as feedStore from '@/stores/feedStore';
-import { getAllFeedMetadataCached } from '@/services/feeds/feedMetadataCache';
+import {
+  getAllFeedMetadataCached,
+  getFeedMetadataMapCached,
+  invalidateFeedMetadataCache,
+} from '@/services/feeds/feedMetadataCache';
+import {
+  hasNeverFetchedFeedsInCatalog,
+  isFeedNeverFetched,
+} from '@/services/feeds/initialFetchPolicy';
 import {
   abortPendingSidebarRestore,
   beginSidebarRestoreAttempt,
@@ -47,13 +55,17 @@ import {
   startRendererSessionMemoryDiagnostics,
 } from '@/services/diagnostics/rendererSessionMemoryDiagnostics';
 import { logListRefreshAttribution } from '@/services/diagnostics/webKitAttribution';
-import { recordRobustnessEvent } from '@/services/diagnostics/robustnessMetrics';
+import { recordRobustnessDuration, recordRobustnessEvent } from '@/services/diagnostics/robustnessMetrics';
 import { feedLibraryMutationBus } from '@/services/ui/feedLibraryMutationBus';
 import { subscribeAssistantLibraryChanges, toArticleListUpdate } from '@/services/assistant/assistantLibraryChanges';
 import { feedRefreshCoordinator } from '@/services/feeds/feedRefreshCoordinator';
 import { feedRefreshActivity } from '@/services/feeds/feedRefreshActivity';
 import { interactionPerformance } from '@/services/performance/interactionPerformance';
-import { sidebarSwitchTrace, traceSidebarSwitchAsync } from '@/services/performance/sidebarSwitchTrace';
+import {
+  sidebarSwitchTrace,
+  traceSidebarSwitchAsync,
+  type SidebarSwitchSourceType,
+} from '@/services/performance/sidebarSwitchTrace';
 import { sourceSelectionBus } from '@/services/feeds/sourceSelectionBus';
 import {
   cancelSourceSelectionRefreshSchedule,
@@ -267,6 +279,7 @@ type ListSourceSwitchSpec = {
   token: number;
   shouldReset: boolean;
   sourceKey: string;
+  sourceType: SidebarSwitchSourceType;
   perfMark: string;
   query: ArticleQuery;
   deferredTaggedFeedCount: number;
@@ -532,7 +545,8 @@ type CollectionAction =
       intentGeneration?: number;
     };
   }
-  | { type: 'RESET_FOR_SOURCE_SWITCH' };
+  | { type: 'RESET_FOR_SOURCE_SWITCH' }
+  | { type: 'RESET_FOR_SAVED_SWITCH' };
 
 const areArticleListsEquivalent = (current: Article[], next: Article[]): boolean => {
   if (current === next) return true;
@@ -723,6 +737,7 @@ function collectionReducer(state: CollectionState, action: CollectionAction): Co
         newArticleCount: action.payload.newArticleHashes.size,
         newArticleHashes: action.payload.newArticleHashes,
         articleListScrollRequest: action.payload.scrollRequest,
+        ...(action.payload.list.length > 0 ? { isLoadingArticles: false } : {}),
       };
     case 'APPEND_ARTICLES': {
       if (action.payload.intentGeneration !== state.visibleListIntentGeneration) {
@@ -830,35 +845,44 @@ function collectionReducer(state: CollectionState, action: CollectionAction): Co
         isLoadMoreInFlight: false,
       };
     case 'RESET_FOR_SOURCE_SWITCH':
-      if (
-        state.articles.length === 0
-        && state.articlesTotalCount === 0
-        && !state.articlesTotalKnown
-        && !state.pageWasFull
-        && state.isLoadingArticles
-        && !state.isSavedListLoading
-        && !state.isLoadingMoreArticles
-        && !state.isLoadMoreInFlight
-      ) {
-        return state;
-      }
-      return {
-        ...state,
-        articles: [],
-        articlesTotalCount: 0,
-        articlesTotalKnown: false,
-        pageWasFull: false,
-        newArticleCount: 0,
-        newArticleHashes: new Set<string>(),
-        articleListScrollRequest: null,
-        isLoadingArticles: true,
-        isSavedListLoading: false,
-        isLoadingMoreArticles: false,
-        isLoadMoreInFlight: false,
-      };
+      return applySwitchResetState(state, { isLoadingArticles: true, isSavedListLoading: false });
+    case 'RESET_FOR_SAVED_SWITCH':
+      return applySwitchResetState(state, { isLoadingArticles: false, isSavedListLoading: true });
     default:
       return state;
   }
+}
+
+function applySwitchResetState(
+  state: CollectionState,
+  flags: { isLoadingArticles: boolean; isSavedListLoading: boolean },
+): CollectionState {
+  if (
+    state.articles.length === 0
+    && state.articlesTotalCount === 0
+    && !state.articlesTotalKnown
+    && !state.pageWasFull
+    && state.isLoadingArticles === flags.isLoadingArticles
+    && state.isSavedListLoading === flags.isSavedListLoading
+    && !state.isLoadingMoreArticles
+    && !state.isLoadMoreInFlight
+  ) {
+    return state;
+  }
+  return {
+    ...state,
+    articles: [],
+    articlesTotalCount: 0,
+    articlesTotalKnown: false,
+    pageWasFull: false,
+    newArticleCount: 0,
+    newArticleHashes: new Set<string>(),
+    articleListScrollRequest: null,
+    isLoadingArticles: flags.isLoadingArticles,
+    isSavedListLoading: flags.isSavedListLoading,
+    isLoadingMoreArticles: false,
+    isLoadMoreInFlight: false,
+  };
 }
 
 type OverlayAction =
@@ -1048,6 +1072,13 @@ export const FeedProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   // the skeleton: rows publish first, or Phase B settles onto the honest
   // empty view. No timers; superseded by the next beginSelectionRequest.
   const importEmptyCommitTokenRef = useRef<number | null>(null);
+  const coldSwitchSkeletonStartedAtRef = useRef<{
+    token: number;
+    sourceKey: string;
+    sourceType: SidebarSwitchSourceType;
+    startedAtMs: number;
+    initialFetchHoldStartedAtMs: number | null;
+  } | null>(null);
   const interactiveRefreshScopeTokenRef = useRef(0);
   const lastQueryRef = useRef<ArticleQuery | null>(null);
   const lastQuerySourceKeyRef = useRef<string | null>(null);
@@ -1351,6 +1382,7 @@ export const FeedProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     total: number,
     options?: {
       clearSwitchLoading?: boolean;
+      clearSavedLoading?: boolean;
       totalKnown?: boolean;
       pageWasFull?: boolean;
       intentGeneration?: number;
@@ -1372,8 +1404,14 @@ export const FeedProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           intentGeneration: options?.intentGeneration,
         },
       });
-      if (options?.clearSwitchLoading) {
-        collectionDispatch({ type: 'SET_LOADING', payload: { isLoadingArticles: false } });
+      if (options?.clearSwitchLoading || options?.clearSavedLoading) {
+        collectionDispatch({
+          type: 'SET_LOADING',
+          payload: {
+            ...(options?.clearSwitchLoading ? { isLoadingArticles: false } : {}),
+            ...(options?.clearSavedLoading ? { isSavedListLoading: false } : {}),
+          },
+        });
       }
     });
   }, [startTransition]);
@@ -1383,6 +1421,7 @@ export const FeedProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     total: number,
     options?: {
       clearSwitchLoading?: boolean;
+      clearSavedLoading?: boolean;
       totalKnown?: boolean;
       pageWasFull?: boolean;
       sourceKey?: string;
@@ -1485,13 +1524,71 @@ export const FeedProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     return true;
   }, [dispatchArticlesTransition, setArticleListSearchStatus]);
 
-  const clearSwitchLoadingInTransition = useCallback(() => {
+  const clearSwitchLoadingInTransition = useCallback((options?: { clearSaved?: boolean }) => {
     // Sequence the skeleton clear behind any pending article-list transition so
     // the empty pre-switch list is never rendered with loading already false.
     startTransition(() => {
-      collectionDispatch({ type: 'SET_LOADING', payload: { isLoadingArticles: false } });
+      collectionDispatch({
+        type: 'SET_LOADING',
+        payload: options?.clearSaved
+          ? { isLoadingArticles: false, isSavedListLoading: false }
+          : { isLoadingArticles: false },
+      });
     });
   }, [startTransition]);
+
+  const noteColdSwitchSkeletonStarted = useCallback((
+    token: number,
+    sourceKey: string,
+    sourceType: SidebarSwitchSourceType,
+  ): void => {
+    coldSwitchSkeletonStartedAtRef.current = {
+      token,
+      sourceKey,
+      sourceType,
+      startedAtMs: getPerformanceTimeMs(),
+      initialFetchHoldStartedAtMs: null,
+    };
+  }, []);
+
+  const noteColdSwitchSkeletonCleared = useCallback((
+    token: number,
+    outcome: { articleCount: number; cancelled?: boolean },
+  ): void => {
+    const active = coldSwitchSkeletonStartedAtRef.current;
+    if (!active || active.token !== token) {
+      return;
+    }
+    coldSwitchSkeletonStartedAtRef.current = null;
+    const nowMs = getPerformanceTimeMs();
+    if (outcome.cancelled) {
+      if (active.initialFetchHoldStartedAtMs !== null) {
+        recordRobustnessEvent('sidebarSwitch.cancelledDuringInitialFetch');
+      }
+      return;
+    }
+
+    const durationMs = Math.max(0, nowMs - active.startedAtMs);
+    recordRobustnessDuration('sidebarSwitch.skeletonVisibleMs', durationMs);
+    if (active.initialFetchHoldStartedAtMs !== null) {
+      recordRobustnessDuration(
+        'sidebarSwitch.initialFetchWaitMs',
+        Math.max(0, nowMs - active.initialFetchHoldStartedAtMs),
+      );
+    }
+    if (outcome.articleCount === 0) {
+      recordRobustnessEvent('sidebarSwitch.emptyWithoutRows');
+    }
+    if (durationMs > 8_000) {
+      logger.warn('FeedContext', 'Slow cold switch skeleton wait', {
+        sourceType: active.sourceType,
+        sourceKey: active.sourceKey,
+        durationMs: Math.round(durationMs),
+        initialFetchHold: active.initialFetchHoldStartedAtMs !== null,
+        articleCount: outcome.articleCount,
+      });
+    }
+  }, []);
 
   const rememberSourceArticleSnapshot = useCallback((
     sourceKey: string,
@@ -1665,6 +1762,7 @@ export const FeedProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         importEmptyCommitTokenRef.current = null;
         clearPendingColdSwitchSqlite(token);
         clearSwitchLoadingInTransition();
+        noteColdSwitchSkeletonCleared(token, { articleCount: currentArticlesRef.current.length });
         completeSelectionSwitchNetworkPriority(token);
         return;
       }
@@ -1674,6 +1772,7 @@ export const FeedProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
 
     clearSwitchLoadingInTransition();
+    noteColdSwitchSkeletonCleared(token, { articleCount: currentArticlesRef.current.length });
     if (shouldHoldSchedulerResumeForWarmFull(token)) {
       deferNetworkSchedulerResumeTokenRef.current = token;
       return;
@@ -1684,6 +1783,7 @@ export const FeedProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     clearSwitchLoadingInTransition,
     completeSelectionSwitchNetworkPriority,
     isSelectionActive,
+    noteColdSwitchSkeletonCleared,
   ]);
 
   const beginSelectionSwitchNetworkPriority = useCallback((token: number) => {
@@ -1716,6 +1816,10 @@ export const FeedProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     clearStationUiRefreshTimer();
     cancelSourceSelectionRefreshSchedule();
     if (previousToken > 0) {
+      noteColdSwitchSkeletonCleared(previousToken, {
+        articleCount: currentArticlesRef.current.length,
+        cancelled: true,
+      });
       sidebarSwitchTrace.cancel(previousToken, 'superseded');
     }
     if (options?.acknowledge !== false) {
@@ -1723,7 +1827,13 @@ export const FeedProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
     beginSelectionSwitchNetworkPriority(token);
     return token;
-  }, [abortSelectionSwitchPriority, beginSelectionSwitchNetworkPriority, clearStationUiRefreshTimer, switchLifecycle]);
+  }, [
+    abortSelectionSwitchPriority,
+    beginSelectionSwitchNetworkPriority,
+    clearStationUiRefreshTimer,
+    noteColdSwitchSkeletonCleared,
+    switchLifecycle,
+  ]);
 
   const clearArticleListScrollIdleState = useCallback(() => {
     if (articleListScrollIdleTimerRef.current !== null) {
@@ -2479,6 +2589,15 @@ export const FeedProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
               },
             });
           });
+          const activeToken = switchLifecycle.currentToken;
+          if (
+            importEmptyCommitTokenRef.current === activeToken
+            && activeSourceRef.current?.key === nextSource.key
+          ) {
+            importEmptyCommitTokenRef.current = null;
+            clearPendingColdSwitchSqlite(activeToken);
+            noteColdSwitchSkeletonCleared(activeToken, { articleCount: publishedList.length });
+          }
         } else if (
           !nonSearchSnapshotRef.current.totalKnown
           || nonSearchSnapshotRef.current.total !== total
@@ -2505,7 +2624,7 @@ export const FeedProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
 
         const pendingSourceKey = pendingBackgroundRefreshSourceKeyRef.current;
-        const latestSource = activeSourceRef.current;
+        const latestSource: RefreshSourceDescriptor | null = activeSourceRef.current;
         nextSource = pendingSourceKey !== null && latestSource?.key === pendingSourceKey
           ? latestSource
           : null;
@@ -2526,11 +2645,14 @@ export const FeedProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       backgroundRefreshInFlightRef.current = false;
     }
   }, [
+    clearPendingColdSwitchSqlite,
     createArticleQueryForSource,
     createBackgroundScrollRequest,
     isArticleViewTransitioning,
+    noteColdSwitchSkeletonCleared,
     requeueActiveSearchForSource,
     startTransition,
+    switchLifecycle,
   ]);
 
   const flushStationUiUpdates = useCallback(async (): Promise<void> => {
@@ -2568,13 +2690,13 @@ export const FeedProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const resolveEligibleStationFeedIds = useCallback(async (
     feedIds: string[],
-    options: RefreshTriggerOptions,
+    options: RefreshTriggerOptions & { prioritizeNeverFetched?: boolean },
     token: number,
     maxEligible?: number,
   ): Promise<string[]> => {
-    const allFeeds = await getAllFeedMetadataCached();
-    const feedById = new Map(allFeeds.map((feed) => [feed.id, feed]));
-    const eligibleFeedIds: string[] = [];
+    const feedById = await getFeedMetadataMapCached();
+    const neverFetchedIds: string[] = [];
+    const otherEligibleIds: string[] = [];
     const refreshOrderIds = sortStationSwitchRefreshIds(feedIds);
 
     for (const id of refreshOrderIds) {
@@ -2597,13 +2719,30 @@ export const FeedProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         continue;
       }
 
-      eligibleFeedIds.push(id);
-      if (maxEligible !== undefined && eligibleFeedIds.length >= maxEligible) {
-        break;
+      if (options.prioritizeNeverFetched && isFeedNeverFetched(feed)) {
+        neverFetchedIds.push(id);
+        if (maxEligible !== undefined && neverFetchedIds.length >= maxEligible) {
+          break;
+        }
+      } else {
+        otherEligibleIds.push(id);
+        if (
+          !options.prioritizeNeverFetched
+          && maxEligible !== undefined
+          && otherEligibleIds.length >= maxEligible
+        ) {
+          break;
+        }
       }
     }
 
-    return eligibleFeedIds;
+    const eligibleFeedIds = options.prioritizeNeverFetched
+      ? [...neverFetchedIds, ...otherEligibleIds]
+      : otherEligibleIds;
+
+    return maxEligible !== undefined
+      ? eligibleFeedIds.slice(0, maxEligible)
+      : eligibleFeedIds;
   }, [isSelectionActive]);
 
   /**
@@ -2662,25 +2801,41 @@ export const FeedProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       return { inserted: 0, scopeGeneration: 0 };
     }
 
-    // Import switches (awaitInitialFetch) must await the first fetch so the
-    // skeleton clears onto fetched rows instead of racing a background cycle;
-    // the native switch path only boosts and returns, which is what stranded
-    // the post-import skeleton onto an empty view.
-    if (intent === 'switch' && isNativeFeedIngestionEnabled() && options.awaitInitialFetch !== true) {
+    // Switches into stations whose feeds have never been fetched (or explicit
+    // awaitInitialFetch import switches) must run a bounded foreground batch so
+    // the shimmering skeleton clears onto fetched rows instead of leaving the
+    // user on an empty 0-count view while background boostMany queues behind
+    // hundreds of other feeds.
+    let needsInitialFetch = options.awaitInitialFetch === true || importEmptyCommitTokenRef.current === token;
+    if (
+      !needsInitialFetch
+      && intent === 'switch'
+      && isNativeFeedIngestionEnabled()
+      && currentArticlesRef.current.length === 0
+    ) {
+      const feedById = await getFeedMetadataMapCached();
+      if (!isSelectionActive(token)) {
+        return { inserted: 0, scopeGeneration: 0 };
+      }
+      needsInitialFetch = hasNeverFetchedFeedsInCatalog(feedIds, feedById);
+    }
+
+    if (intent === 'switch' && isNativeFeedIngestionEnabled() && !needsInitialFetch) {
       return runNativeSwitchStationRefresh(feedIds, token, tagName);
     }
 
+    const resolveOptions = { ...options, prioritizeNeverFetched: needsInitialFetch };
     const eligibleFeedIds = await traceSidebarSwitchAsync(
       token,
       'eligible-feeds-resolved',
       () => (intent === 'switch'
         ? resolveEligibleStationFeedIds(
           feedIds,
-          options,
+          resolveOptions,
           token,
           STATION_SWITCH_FOREGROUND_REFRESH_CAP,
         )
-        : resolveEligibleStationFeedIds(feedIds, options, token)),
+        : resolveEligibleStationFeedIds(feedIds, resolveOptions, token)),
       { feedCount: feedIds.length, intent },
     );
 
@@ -2814,6 +2969,14 @@ export const FeedProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             activityKind: 'foreground',
             skipActivityQueue: true,
             onFeedSettled: settleFeed,
+            onFeedComplete: (payload) => {
+              if (!payload.error && (payload.insertedCount ?? 0) > 0) {
+                feedsNeedingCountSync.add(payload.feedId);
+                if (isSelectionActive(token)) {
+                  scheduleStationUiRefresh(sourceKey);
+                }
+              }
+            },
           });
 
           for (const id of foregroundFeedIds) {
@@ -2889,6 +3052,7 @@ export const FeedProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       return { inserted: insertedTotal, scopeGeneration: interactiveRefreshScopeToken };
     } finally {
       releaseQueuedFeed();
+      invalidateFeedMetadataCache();
       if (deferredFeedIds.length > 0 && isSelectionActive(token)) {
         feedRefreshActivity.markInteractiveRefreshDeferredTail(true, deferredFeedIds.length);
         feedScheduler.boostMany(deferredFeedIds);
@@ -2945,7 +3109,11 @@ export const FeedProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   }, [requestCloseArticle, setActiveArticle]);
 
-  const applyImmediateSelectionSwitchPaint = useCallback((sourceKey: string) => {
+  const applyImmediateSelectionSwitchPaint = useCallback((
+    sourceKey: string,
+    token?: number,
+    sourceType?: SidebarSwitchSourceType,
+  ) => {
     if (articleListSearchQueryRef.current !== null) {
       currentArticlesRef.current = [];
       loadMorePagingSnapshotRef.current = {
@@ -2957,6 +3125,9 @@ export const FeedProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         isLoadingMoreArticles: false,
       };
       collectionDispatch({ type: 'RESET_FOR_SOURCE_SWITCH' });
+      if (token !== undefined && sourceType !== undefined) {
+        noteColdSwitchSkeletonStarted(token, sourceKey, sourceType);
+      }
       return;
     }
     const restored = restoreSourceArticleSnapshot(sourceKey);
@@ -2971,6 +3142,9 @@ export const FeedProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         isLoadingMoreArticles: false,
       };
       collectionDispatch({ type: 'RESET_FOR_SOURCE_SWITCH' });
+      if (token !== undefined && sourceType !== undefined) {
+        noteColdSwitchSkeletonStarted(token, sourceKey, sourceType);
+      }
     } else {
       dispatchArticlesTransitionIfChanged(restored.list, restored.total, {
         totalKnown: restored.totalKnown,
@@ -2980,7 +3154,37 @@ export const FeedProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       });
       collectionDispatch({ type: 'SET_LOADING', payload: { isLoadingArticles: false } });
     }
-  }, [dispatchArticlesTransitionIfChanged, restoreSourceArticleSnapshot]);
+  }, [dispatchArticlesTransitionIfChanged, noteColdSwitchSkeletonStarted, restoreSourceArticleSnapshot]);
+
+  const hasNeverFetchedFeedsForSource = useCallback(async (
+    sourceKey: string,
+    token: number,
+  ): Promise<boolean> => {
+    if (sourceKey.startsWith('feed:')) {
+      const feedId = sourceKey.slice('feed:'.length);
+      const feedById = await getFeedMetadataMapCached();
+      if (!isSelectionActive(token)) {
+        return false;
+      }
+      return hasNeverFetchedFeedsInCatalog([feedId], feedById);
+    }
+
+    if (sourceKey.startsWith('tag:')) {
+      const tagName = sourceKey.slice('tag:'.length);
+      const cachedFeedIds = getCachedFeedIdsForTag(tagName);
+      const feedIds = cachedFeedIds ?? await tagsManager.getFeedsByTag(tagName);
+      if (!isSelectionActive(token) || feedIds.length === 0) {
+        return false;
+      }
+      const feedById = await getFeedMetadataMapCached();
+      if (!isSelectionActive(token)) {
+        return false;
+      }
+      return hasNeverFetchedFeedsInCatalog(feedIds, feedById);
+    }
+
+    return false;
+  }, [isSelectionActive]);
 
   const commitDeferredSwitchSqlitePage = useCallback(async (args: {
     token: number;
@@ -3013,6 +3217,7 @@ export const FeedProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           limit ?? SMART_VIEW_ARTICLE_LIMIT,
           STATION_SWITCH_SQLITE_RECONCILE_LIMIT,
         );
+        const queryStartedAt = getPerformanceTimeMs();
         const { articles: stored } = await articleStore.query({
           ...query,
           limit: queryLimit,
@@ -3021,6 +3226,7 @@ export const FeedProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           // a later COUNT-only reconcile.
           includeTotal: false,
         });
+        recordRobustnessDuration('sidebarSwitch.sqlitePageMs', getPerformanceTimeMs() - queryStartedAt);
         if (!isSelectionActive(token)) {
           return false;
         }
@@ -3029,21 +3235,34 @@ export const FeedProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const resolvedTotal = resolvedPage.total;
 
         const dispatchStartedAt = performance.now();
-        if (stored.length === 0 && awaitInitialFetch) {
-          // Import switch: keep the cold-switch skeleton. Phase B awaits the
-          // first fetch and clears loading when it settles — either after its
-          // reconcile publishes rows, or onto the honest empty view here.
-          importEmptyCommitTokenRef.current = token;
-          if (deferNetworkSchedulerResumeTokenRef.current === token) {
-            // Phase B already settled (it beat this page commit) without
-            // publishing rows — nothing more is coming for this attempt.
-            importEmptyCommitTokenRef.current = null;
-            clearPendingColdSwitchSqlite(token);
-            deferNetworkSchedulerResumeTokenRef.current = null;
-            clearSwitchLoadingInTransition();
-            completeSelectionSwitchNetworkPriority(token);
+        if (stored.length === 0) {
+          const shouldHoldForInitialFetch = awaitInitialFetch === true
+            || await hasNeverFetchedFeedsForSource(sourceKey, token);
+          if (!isSelectionActive(token)) {
+            return false;
           }
-          return true;
+          if (shouldHoldForInitialFetch) {
+            // Keep the cold-switch skeleton while Phase B completes the first
+            // fetch for never-fetched sources (e.g. post-OPML import or newly
+            // added feeds/stations) — Phase B clears loading once rows publish
+            // or settles onto the honest empty view.
+            importEmptyCommitTokenRef.current = token;
+            recordRobustnessEvent('sidebarSwitch.coldInitialFetchHold');
+            if (coldSwitchSkeletonStartedAtRef.current?.token === token) {
+              coldSwitchSkeletonStartedAtRef.current.initialFetchHoldStartedAtMs = getPerformanceTimeMs();
+            }
+            if (deferNetworkSchedulerResumeTokenRef.current === token) {
+              // Phase B already settled (it beat this page commit) without
+              // publishing rows — nothing more is coming for this attempt.
+              importEmptyCommitTokenRef.current = null;
+              clearPendingColdSwitchSqlite(token);
+              deferNetworkSchedulerResumeTokenRef.current = null;
+              clearSwitchLoadingInTransition();
+              noteColdSwitchSkeletonCleared(token, { articleCount: 0 });
+              completeSelectionSwitchNetworkPriority(token);
+            }
+            return true;
+          }
         }
         // Rows and skeleton clear must commit in one transition — an urgent
         // loading clear renders before the transition-lane SET_ARTICLES and
@@ -3066,6 +3285,7 @@ export const FeedProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (!dispatchedRows) {
           clearSwitchLoadingInTransition();
         }
+        noteColdSwitchSkeletonCleared(token, { articleCount: stored.length });
         sidebarSwitchTrace.markDuration(
           token,
           'dispatch-articles',
@@ -3088,7 +3308,9 @@ export const FeedProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     clearSwitchLoadingInTransition,
     completeSelectionSwitchNetworkPriority,
     dispatchArticlesTransitionIfChanged,
+    hasNeverFetchedFeedsForSource,
     isSelectionActive,
+    noteColdSwitchSkeletonCleared,
   ]);
 
   const scheduleDeferredSwitchSqliteRecovery = useCallback((args: {
@@ -3115,6 +3337,7 @@ export const FeedProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           // Refs update eagerly on dispatch; the rows may still be pending in
           // the transition lane, so clear loading in the same lane.
           clearSwitchLoadingInTransition();
+          noteColdSwitchSkeletonCleared(token, { articleCount: currentArticlesRef.current.length });
           finishColdSwitchSqliteAndResumeIfNeeded(token);
           return;
         }
@@ -3123,11 +3346,13 @@ export const FeedProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           const dispatched = await commitDeferredSwitchSqlitePage(args);
           if (!dispatched && isSelectionActive(token)) {
             clearSwitchLoadingInTransition();
+            noteColdSwitchSkeletonCleared(token, { articleCount: currentArticlesRef.current.length });
           }
         } catch (error) {
           logger.warn('FeedContext', 'Deferred switch SQLite recovery failed', { error, sourceKey, token });
           if (isSelectionActive(token)) {
             clearSwitchLoadingInTransition();
+            noteColdSwitchSkeletonCleared(token, { articleCount: currentArticlesRef.current.length });
           }
         } finally {
           if (importEmptyCommitTokenRef.current !== token) {
@@ -3144,6 +3369,7 @@ export const FeedProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     finishColdSwitchSqliteAndResumeIfNeeded,
     flushPendingSwitchVisibleReconcileIfIdle,
     isSelectionActive,
+    noteColdSwitchSkeletonCleared,
     switchLifecycle,
   ]);
 
@@ -3328,13 +3554,22 @@ export const FeedProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         : getFeedRefreshBlock(feedMeta, FEED_FETCH_COOLDOWN_MS, { includeBackoff: true });
       if (refreshBlock) {
         logFeedRefreshSkip(feedMeta, refreshBlock);
-        pendingSwitchVisibleReconcileRef.current = {
-          token,
-          sourceKey,
-          tagQuery: feedQuery,
-          mode: warmSnapshotReconcileTokenRef.current === token ? 'full' : 'total-only',
-        };
-        flushPendingSwitchVisibleReconcileIfIdle();
+        if (importEmptyCommitTokenRef.current === token) {
+          await reconcileSwitchVisiblePage({
+            token,
+            sourceKey,
+            tagQuery: feedQuery,
+            mode: 'full',
+          });
+        } else {
+          pendingSwitchVisibleReconcileRef.current = {
+            token,
+            sourceKey,
+            tagQuery: feedQuery,
+            mode: warmSnapshotReconcileTokenRef.current === token ? 'full' : 'total-only',
+          };
+          flushPendingSwitchVisibleReconcileIfIdle();
+        }
         return;
       }
 
@@ -3366,18 +3601,36 @@ export const FeedProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         throw error;
       } finally {
         releaseQueuedFeed();
+        invalidateFeedMetadataCache();
       }
       if (!isSelectionActive(token)) {
         return;
       }
 
       // Cold deferred Phase A owns the first DB page. Skip a competing query
-      // when the network refresh inserted nothing (common on switch cooldown /
-      // native boostMany handoff).
+      // when the network refresh inserted nothing — unless this attempt is an
+      // initial-fetch hold where a concurrent background cycle may have won the
+      // insert dedup race and already stored rows in SQLite.
       const coldDeferredOwnsFirstPage =
         pendingColdSwitchSqliteTokenRef.current === token
         && currentArticlesRef.current.length === 0;
-      if (coldDeferredOwnsFirstPage && insertedCount === 0) {
+      if (
+        coldDeferredOwnsFirstPage
+        && importEmptyCommitTokenRef.current === token
+        && insertedCount === 0
+      ) {
+        const { articles: fresh, total: freshTotal } = await articleStore.query(feedQuery);
+        if (!isSelectionActive(token)) {
+          return;
+        }
+        dispatchArticlesTransitionIfChanged(fresh, freshTotal, {
+          clearSwitchLoading: true,
+          totalKnown: true,
+          pageWasFull: fresh.length >= SMART_VIEW_ARTICLE_LIMIT,
+          sourceKey,
+          query: feedQuery,
+        });
+      } else if (coldDeferredOwnsFirstPage && insertedCount === 0) {
         pendingSwitchVisibleReconcileRef.current = {
           token,
           sourceKey,
@@ -3397,6 +3650,7 @@ export const FeedProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           return;
         }
         dispatchArticlesTransitionIfChanged(fresh, freshTotal, {
+          clearSwitchLoading: true,
           totalKnown: true,
           pageWasFull: fresh.length >= SMART_VIEW_ARTICLE_LIMIT,
           sourceKey,
@@ -3631,6 +3885,7 @@ export const FeedProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         });
       } else if (!immediatePaintApplied) {
         collectionDispatch({ type: 'RESET_FOR_SOURCE_SWITCH' });
+        noteColdSwitchSkeletonStarted(token, sourceKey, spec.sourceType);
       }
       spec.closeArticleForSwitch();
       sidebarSwitchTrace.mark(token, spec.closeTraceMark);
@@ -3760,18 +4015,25 @@ export const FeedProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       requestSwitchNetworkRefresh(resolution.payload);
     } catch {
       clearError();
+      sidebarSwitchTrace.cancel(token, 'error');
+      noteColdSwitchSkeletonCleared(token, {
+        articleCount: currentArticlesRef.current.length,
+        cancelled: true,
+      });
       abortSelectionSwitchPriority(token);
     }
   }, [
     abortSelectionSwitchPriority,
     clearError,
+    flushPendingSwitchVisibleReconcileIfIdle,
     isSelectionActive,
+    noteColdSwitchSkeletonCleared,
+    noteColdSwitchSkeletonStarted,
     requestSwitchNetworkRefresh,
     restoreSourceArticleSnapshot,
     runFeedNetworkRefreshPhase,
     runTagNetworkRefreshPhase,
     scheduleDeferredSwitchSqlitePage,
-    flushPendingSwitchVisibleReconcileIfIdle,
     switchLifecycle,
   ]);
 
@@ -3789,6 +4051,7 @@ export const FeedProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       token,
       shouldReset,
       sourceKey,
+      sourceType: 'feed',
       perfMark,
       query: feedQuery,
       deferredTaggedFeedCount: 1,
@@ -3826,6 +4089,7 @@ export const FeedProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       token,
       shouldReset,
       sourceKey,
+      sourceType: 'tag',
       perfMark,
       query: tagQuery,
       deferredTaggedFeedCount: 0,
@@ -3887,8 +4151,7 @@ export const FeedProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   }, [closeActiveArticleForSourceSwitch, isSelectionActive, runListSourceSwitch]);
 
   const handleSmartViewSelection = useCallback(async (type: SmartViewType, shouldReset: boolean, token: number) => {
-    // Saved keeps its own reset (separate service + isSavedListLoading flag);
-    // other smart views share the immediate switch paint from selectSmartView.
+    const sourceKey = `smart:${type}`;
     const immediatePaintApplied = shouldReset && switchLifecycle.isImmediatePaintApplied(token);
     if (shouldReset) {
       if (!immediatePaintApplied) {
@@ -3901,13 +4164,12 @@ export const FeedProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           pageWasFull: false,
           isLoadingMoreArticles: false,
         };
-        collectionDispatch({ type: 'RESET_ARTICLES' });
-        collectionDispatch({
-          type: 'SET_LOADING',
-          payload: { isLoadingArticles: false, isSavedListLoading: false, },
-        });
         lastQueryRef.current = null;
         lastQuerySourceKeyRef.current = null;
+        collectionDispatch({
+          type: type === 'saved' ? 'RESET_FOR_SAVED_SWITCH' : 'RESET_FOR_SOURCE_SWITCH',
+        });
+        noteColdSwitchSkeletonStarted(token, sourceKey, 'smart');
       }
       setActiveArticle(null);
     }
@@ -3917,20 +4179,25 @@ export const FeedProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     if (type === 'saved') {
       lastQueryRef.current = null;
       lastQuerySourceKeyRef.current = null;
-      collectionDispatch({
-        type: 'SET_LOADING',
-        payload: { isLoadingArticles: false, isSavedListLoading: true, },
-      });
+      if (!immediatePaintApplied) {
+        collectionDispatch({
+          type: 'SET_LOADING',
+          payload: { isLoadingArticles: false, isSavedListLoading: true },
+        });
+      }
 
       try {
+        const queryStartedAt = getPerformanceTimeMs();
         const { articles: saved, total } = await savedArticlesService.querySavedViewArticles(SMART_VIEW_ARTICLE_LIMIT);
+        recordRobustnessDuration('sidebarSwitch.sqlitePageMs', getPerformanceTimeMs() - queryStartedAt);
         if (!isSelectionActive(token)) return;
 
         dispatchArticlesTransitionIfChanged(saved, total, {
-          sourceKey: `smart:${type}`,
+          clearSavedLoading: true,
+          sourceKey,
           query: null,
         });
-        interactionPerformance.markTimedInteractionStage('sidebar-switch', `smart:${type}`, 'cachedReady', {
+        interactionPerformance.markTimedInteractionStage('sidebar-switch', sourceKey, 'cachedReady', {
           cachedArticleCount: saved.length,
           cachedArticleTotal: total,
         });
@@ -3938,10 +4205,11 @@ export const FeedProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const enriched = await savedArticlesService.enrichSavedViewArticlesMeta(saved);
         if (isSelectionActive(token)) {
           dispatchArticlesTransitionIfChanged(enriched, total, {
-            sourceKey: `smart:${type}`,
+            clearSavedLoading: true,
+            sourceKey,
             query: null,
           });
-          interactionPerformance.markTimedInteractionStage('sidebar-switch', `smart:${type}`, 'enrichedReady', {
+          interactionPerformance.markTimedInteractionStage('sidebar-switch', sourceKey, 'enrichedReady', {
             enrichedArticleCount: enriched.length,
             enrichedArticleTotal: total,
           });
@@ -3951,18 +4219,21 @@ export const FeedProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         logger.warn('FeedContext', 'Smart view query failed', { viewType: type, token, error });
       } finally {
         if (isSelectionActive(token)) {
-          collectionDispatch({ type: 'SET_LOADING', payload: { isSavedListLoading: false, } });
+          clearSwitchLoadingInTransition({ clearSaved: true });
+          noteColdSwitchSkeletonCleared(token, { articleCount: currentArticlesRef.current.length });
         }
+        completeSelectionSwitchNetworkPriority(token);
+        sidebarSwitchTrace.completeNetwork(token, { kind: 'smart', viewType: type });
       }
       return;
     }
 
-    if (!immediatePaintApplied) {
+    if (!immediatePaintApplied && shouldReset) {
       // Immediate paint already chose skeleton vs snapshot; do not flip the
       // loading flag back on over a restored list.
       collectionDispatch({
         type: 'SET_LOADING',
-        payload: { isLoadingArticles: true, isSavedListLoading: false, },
+        payload: { isLoadingArticles: true, isSavedListLoading: false },
       });
     }
 
@@ -3977,15 +4248,18 @@ export const FeedProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
               ? createArticleListQuery({ today: true })
               : createArticleListQuery({});
       lastQueryRef.current = query;
-      lastQuerySourceKeyRef.current = `smart:${type}`;
+      lastQuerySourceKeyRef.current = sourceKey;
 
+      const queryStartedAt = getPerformanceTimeMs();
       const { articles: list, total } = await articleStore.query(query);
+      recordRobustnessDuration('sidebarSwitch.sqlitePageMs', getPerformanceTimeMs() - queryStartedAt);
       if (!isSelectionActive(token)) return;
       dispatchArticlesTransitionIfChanged(list, total, {
-        sourceKey: `smart:${type}`,
+        clearSwitchLoading: true,
+        sourceKey,
         query,
       });
-      interactionPerformance.markTimedInteractionStage('sidebar-switch', `smart:${type}`, 'cachedReady', {
+      interactionPerformance.markTimedInteractionStage('sidebar-switch', sourceKey, 'cachedReady', {
         cachedArticleCount: list.length,
         cachedArticleTotal: total,
       });
@@ -3994,13 +4268,23 @@ export const FeedProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       logger.warn('FeedContext', 'Smart view query failed', { viewType: type, token, error });
     } finally {
       if (isSelectionActive(token)) {
-        collectionDispatch({
-          type: 'SET_LOADING',
-          payload: { isLoadingArticles: false, isSavedListLoading: false, },
-        });
+        clearSwitchLoadingInTransition({ clearSaved: true });
+        noteColdSwitchSkeletonCleared(token, { articleCount: currentArticlesRef.current.length });
       }
+      completeSelectionSwitchNetworkPriority(token);
+      sidebarSwitchTrace.completeNetwork(token, { kind: 'smart', viewType: type });
     }
-  }, [dispatchArticlesTransitionIfChanged, isSelectionActive, setActiveArticle, startTransition, yieldToSelectionCoalescing]);
+  }, [
+    clearSwitchLoadingInTransition,
+    completeSelectionSwitchNetworkPriority,
+    dispatchArticlesTransitionIfChanged,
+    isSelectionActive,
+    noteColdSwitchSkeletonCleared,
+    noteColdSwitchSkeletonStarted,
+    setActiveArticle,
+    switchLifecycle,
+    yieldToSelectionCoalescing,
+  ]);
 
   if (!hasBootstrappedTotalFeedsRef.current) {
     hasBootstrappedTotalFeedsRef.current = true;
@@ -4043,7 +4327,7 @@ export const FeedProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       acknowledge: options.acknowledgeSidebar !== false && !options.restore,
     });
     if (!isSameFeed) {
-      applyImmediateSelectionSwitchPaint(`feed:${feedId}`);
+      applyImmediateSelectionSwitchPaint(`feed:${feedId}`, token, 'feed');
       switchLifecycle.markImmediatePaintApplied(token);
     }
     sidebarSwitchTrace.begin(token, `feed:${feedId}`, 'feed', {
@@ -4052,7 +4336,7 @@ export const FeedProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       isSameSource: isSameFeed,
     });
     void handleFeedSelection(feedId, !isSameFeed, token, options);
-  }, [advanceVisibleListIntent, applyImmediateSelectionSwitchPaint, beginSelectionRequest, cancelActiveSearch, clearArticleListScrollIdleState, handleFeedSelection, settlePendingSearchRequest]);
+  }, [advanceVisibleListIntent, applyImmediateSelectionSwitchPaint, beginSelectionRequest, cancelActiveSearch, clearArticleListScrollIdleState, handleFeedSelection, settlePendingSearchRequest, switchLifecycle]);
 
   const selectTag = useCallback(async (
     tagName: string,
@@ -4090,7 +4374,7 @@ export const FeedProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       acknowledge: options.acknowledgeSidebar !== false && !options.restore,
     });
     if (!isSameTag) {
-      applyImmediateSelectionSwitchPaint(`tag:${tagName}`);
+      applyImmediateSelectionSwitchPaint(`tag:${tagName}`, token, 'tag');
       switchLifecycle.markImmediatePaintApplied(token);
     }
     sidebarSwitchTrace.begin(token, `tag:${tagName}`, 'tag', {
@@ -4099,7 +4383,7 @@ export const FeedProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       isSameSource: isSameTag,
     });
     void handleTagSelection(tagName, !isSameTag, token, options);
-  }, [advanceVisibleListIntent, applyImmediateSelectionSwitchPaint, beginSelectionRequest, cancelActiveSearch, clearArticleListScrollIdleState, handleTagSelection, settlePendingSearchRequest]);
+  }, [advanceVisibleListIntent, applyImmediateSelectionSwitchPaint, beginSelectionRequest, cancelActiveSearch, clearArticleListScrollIdleState, handleTagSelection, settlePendingSearchRequest, switchLifecycle]);
 
   const selectSmartView = useCallback(async (
     viewType: SmartViewType,
@@ -4132,20 +4416,45 @@ export const FeedProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const token = beginSelectionRequest({
       acknowledge: options.acknowledgeSidebar !== false && !options.restore,
     });
-    if (!isSameSmart && viewType !== 'saved') {
-      // Saved paints synchronously through its own reset in the handler; the
-      // other smart views reuse the snapshot-or-skeleton immediate paint.
-      applyImmediateSelectionSwitchPaint(`smart:${viewType}`);
-      switchLifecycle.markImmediatePaintApplied(token);
+    if (!isSameSmart) {
+      if (viewType === 'saved') {
+        currentArticlesRef.current = [];
+        loadMorePagingSnapshotRef.current = {
+          length: 0,
+          lastArticle: undefined,
+          articlesTotalCount: 0,
+          articlesTotalKnown: false,
+          pageWasFull: false,
+          isLoadingMoreArticles: false,
+        };
+        lastQueryRef.current = null;
+        lastQuerySourceKeyRef.current = null;
+        collectionDispatch({ type: 'RESET_FOR_SAVED_SWITCH' });
+        switchLifecycle.markImmediatePaintApplied(token);
+        noteColdSwitchSkeletonStarted(token, `smart:${viewType}`, 'smart');
+      } else {
+        applyImmediateSelectionSwitchPaint(`smart:${viewType}`, token, 'smart');
+        switchLifecycle.markImmediatePaintApplied(token);
+      }
     }
+    sidebarSwitchTrace.begin(token, `smart:${viewType}`, 'smart', {
+      sourceId: viewType,
+      sourceLabel: smartViewSourceLabel(viewType),
+      isSameSource: isSameSmart,
+    });
     void handleSmartViewSelection(viewType, !isSameSmart, token);
-  }, [advanceVisibleListIntent, applyImmediateSelectionSwitchPaint, beginSelectionRequest, cancelActiveSearch, clearArticleListScrollIdleState, handleSmartViewSelection, settlePendingSearchRequest]);
+  }, [advanceVisibleListIntent, applyImmediateSelectionSwitchPaint, beginSelectionRequest, cancelActiveSearch, clearArticleListScrollIdleState, handleSmartViewSelection, noteColdSwitchSkeletonStarted, settlePendingSearchRequest, switchLifecycle]);
 
   const clearFeedSelection = useCallback(() => {
     abortPendingSidebarRestore();
     feedScheduler.clearActiveStationFocus();
     abortSelectionSwitchPriority();
     clearArticleListScrollIdleState();
+    const activeToken = switchLifecycle.currentToken;
+    if (activeToken > 0) {
+      noteColdSwitchSkeletonCleared(activeToken, { articleCount: 0, cancelled: true });
+      sidebarSwitchTrace.cancel(activeToken, 'cleared');
+    }
     switchLifecycle.invalidate();
     articleListSearchQueryRef.current = null;
     articleListSearchRevisionRef.current += 1;
@@ -4173,7 +4482,7 @@ export const FeedProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     navigationDispatch({ type: 'CLEAR_SELECTION' });
     collectionDispatch({ type: 'RESET_ARTICLES' });
     collectionDispatch({ type: 'SET_LOADING', payload: { isLoadingArticles: false, isSavedListLoading: false, } });
-  }, [abortSelectionSwitchPriority, advanceVisibleListIntent, cancelActiveSearch, clearArticleListScrollIdleState, settlePendingSearchRequest]);
+  }, [abortSelectionSwitchPriority, advanceVisibleListIntent, cancelActiveSearch, clearArticleListScrollIdleState, noteColdSwitchSkeletonCleared, settlePendingSearchRequest, switchLifecycle]);
 
   useMountEffect(() => {
     return sourceSelectionBus.subscribe((event) => {
@@ -5088,6 +5397,9 @@ export const FeedProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         stationUiBatchTimerRef.current = null;
       }
       switchLifecycle.dispose();
+      if (selectionSchedulerPauseTokenRef.current !== null) {
+        abortSelectionSwitchPriority(selectionSchedulerPauseTokenRef.current);
+      }
       pendingSchedulerFeedUpdatesRef.current.clear();
       pendingBackgroundRefreshSourceKeyRef.current = null;
       pendingStationRefreshSourceKeyRef.current = null;

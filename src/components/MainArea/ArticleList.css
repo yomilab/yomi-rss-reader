@@ -299,12 +299,12 @@ html[data-os="other"] .article-list {
 }
 
 /* Skeleton Screens */
-.article-list-items {
+.article-list {
   --article-list-skeleton-bg: color-mix(in srgb, var(--theme-text-secondary) 16%, transparent);
   --article-list-skeleton-shimmer-mid: rgba(255, 255, 255, 0.35);
 }
 
-[data-theme="dark"] .article-list-items {
+[data-theme="dark"] .article-list {
   --article-list-skeleton-bg: rgba(255, 255, 255, 0.12);
   --article-list-skeleton-shimmer-mid: rgba(255, 255, 255, 0.34);
 }

@@ -1,12 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const previewNativeCycle = vi.hoisted(() => vi.fn());
+const cancelNativeCycle = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const beginQueuedFeeds = vi.hoisted(() => vi.fn(() => vi.fn()));
 
 vi.mock("@/lib/tauriClient", () => ({
   tauriClient: {
     scheduler: {
       previewNativeCycle,
+      cancelNativeCycle,
     },
   },
 }));
@@ -121,6 +123,44 @@ describe("nativeFeedRefresh", () => {
     });
 
     expect(beginQueuedFeeds).not.toHaveBeenCalled();
+  });
+
+  it("cancels an in-flight foreground native cycle when the abort signal fires", async () => {
+    let resolveCycle!: (value: unknown) => void;
+    previewNativeCycle.mockImplementation(() => new Promise((resolve) => {
+      resolveCycle = resolve;
+    }));
+
+    const controller = new AbortController();
+    const pending = runNativeFeedRefresh({
+      feedIds: ["feed-1"],
+      activityKind: "foreground",
+      skipActivityQueue: true,
+      signal: controller.signal,
+    });
+
+    for (let i = 0; i < 50 && previewNativeCycle.mock.calls.length === 0; i++) {
+      await Promise.resolve();
+    }
+    expect(previewNativeCycle).toHaveBeenCalledTimes(1);
+    const passedCycleId = previewNativeCycle.mock.calls[0]?.[0]?.cycleId;
+    expect(passedCycleId).toMatch(/^fg-\d+$/);
+
+    controller.abort();
+    expect(cancelNativeCycle).toHaveBeenCalledWith({ cycleId: passedCycleId });
+
+    resolveCycle({
+      plan: { prioritized: [], skippedBackoffCount: 0, skippedSuppressedCount: 0 },
+      queuedCount: 1,
+      executedFeedCount: 0,
+      changedFeeds: 0,
+      notModifiedFeeds: 0,
+      failedFeeds: 0,
+      insertedArticles: 0,
+      feedResults: [],
+    });
+
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
   });
 
   describe("activity-kind lock — foreground must not block on a running background cycle", () => {

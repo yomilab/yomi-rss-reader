@@ -7,6 +7,7 @@ import {
   roundPerformanceValue,
   type RenderCommitMetric,
 } from '@/services/performance/interactionPerformance';
+import { recordRobustnessDuration } from '@/services/diagnostics/robustnessMetrics';
 
 export type SidebarSwitchSourceType = 'feed' | 'tag' | 'smart';
 
@@ -298,6 +299,7 @@ export const sidebarSwitchTrace = {
     }
 
     trace.interactiveDurationMs = roundPerformanceValue(performance.now() - trace.startedAt);
+    recordRobustnessDuration('sidebarSwitch.interactiveMs', trace.interactiveDurationMs);
     trace.renderCommit = renderCommit;
     pushStage(trace, 'first-list-commit', {
       renderCommitMs: renderCommit?.actualDurationMs ?? null,

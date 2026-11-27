@@ -12,6 +12,7 @@ import * as feedStore from '@/stores/feedStore';
 import { convertFeedItemsToArticles } from '@/services/articles/articleConverter';
 import { clearTagFeedIdsCacheForTests } from '@/services/tags/tagFeedIdsCache';
 import { clearFeedMetadataCacheForTests } from '@/services/feeds/feedMetadataCache';
+import { feedScheduler } from '@/services/scheduler/feedSchedulerService';
 import { feedNetworkDataResult } from '../helpers/feedNetworkFetchMock';
 
 vi.mock('@/stores/articleStore', () => ({
@@ -189,6 +190,7 @@ describe('FeedContext Cross-Type Race Conditions', () => {
     vi.clearAllMocks();
     clearTagFeedIdsCacheForTests();
     clearFeedMetadataCacheForTests();
+    feedScheduler.releaseStationSelectionPause('selection-changed');
     latestContext = null;
     vi.stubGlobal('requestIdleCallback', (callback: IdleRequestCallback) => {
       const id = window.setTimeout(() => {
@@ -3651,6 +3653,217 @@ describe('FeedContext Cross-Type Race Conditions', () => {
 
       expect(latestContext!.articlesTotalCount).toBe(1);
       expect(latestContext!.articles.map((article) => article.hash)).toEqual(['hash-daily-new']);
+    });
+  });
+
+  describe('never-fetched feeds & smart views consistency', () => {
+    it('holds skeleton for a never-fetched single feed clicked without awaitInitialFetch until Phase B publishes rows', async () => {
+      const stateHistory: Array<{ isLoadingArticles: boolean; articleCount: number }> = [];
+      const fetchDeferred = createDeferred<ReturnType<typeof feedNetworkDataResult>>();
+      const committedRows: Article[] = [];
+
+      (feedStore.getAll as Mock).mockResolvedValue([
+        stationFeed('feed-fresh', { lastFetched: null, lastFailedFetchAt: undefined }),
+      ]);
+      (feedStore.getById as Mock).mockResolvedValue(
+        stationFeed('feed-fresh', { lastFetched: null, lastFailedFetchAt: undefined }),
+      );
+      (articleStore.query as Mock).mockImplementation((query: MockArticleQuery) => {
+        if (query.feedIds?.includes('feed-fresh')) {
+          return Promise.resolve({ articles: [...committedRows], total: committedRows.length });
+        }
+        return Promise.resolve({ articles: [], total: 0 });
+      });
+      (articleStore.store as Mock).mockImplementation((_feedId: string, articles: Article[]) => {
+        committedRows.push(...articles);
+        return Promise.resolve(articles.length);
+      });
+      (convertFeedItemsToArticles as Mock).mockResolvedValue([createArticle('hash-fresh-1', 'feed-fresh')]);
+      (feedsFetcher.fetchFeedNetworkWithCache as Mock).mockImplementation(() => fetchDeferred.promise);
+
+      const HistoryProbe: React.FC = () => {
+        latestContext = useFeed();
+        stateHistory.push({
+          isLoadingArticles: latestContext.isLoadingArticles,
+          articleCount: latestContext.articles.length,
+        });
+        return null;
+      };
+
+      act(() => {
+        root.render(
+          <FeedProvider>
+            <HistoryProbe />
+          </FeedProvider>,
+        );
+      });
+      await waitForExpectation(() => expect(latestContext).not.toBeNull());
+
+      await act(async () => {
+        void latestContext!.selectFeed('feed-fresh', 'https://fresh.example.com/rss.xml', 'Fresh Feed', {
+          forceNetwork: true,
+        });
+      });
+
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      });
+
+      expect(latestContext!.selectedFeedId).toBe('feed-fresh');
+      expect(latestContext!.isLoadingArticles).toBe(true);
+      expect(latestContext!.articles).toEqual([]);
+      expect(feedsFetcher.fetchFeedNetworkWithCache).toHaveBeenCalledTimes(1);
+
+      const skeletonIndex = stateHistory.findIndex((entry) => entry.isLoadingArticles);
+      expect(skeletonIndex).toBeGreaterThanOrEqual(0);
+      expect(
+        stateHistory.slice(skeletonIndex + 1).filter((entry) => !entry.isLoadingArticles && entry.articleCount === 0),
+      ).toEqual([]);
+
+      await act(async () => {
+        fetchDeferred.resolve(feedNetworkDataResult());
+        await Promise.resolve();
+      });
+
+      await waitForExpectation(() => {
+        expect(latestContext!.isLoadingArticles).toBe(false);
+        expect(latestContext!.articles.map((article) => article.hash)).toEqual(['hash-fresh-1']);
+      });
+
+      expect(
+        stateHistory.slice(skeletonIndex + 1).filter((entry) => !entry.isLoadingArticles && entry.articleCount === 0),
+      ).toEqual([]);
+    });
+
+    it('reconciles SQLite rows for a never-fetched feed when Phase B hits cooldown or concurrent-cycle dedup', async () => {
+      const committedRows: Article[] = [createArticle('hash-bg-won', 'feed-cooled')];
+      (feedStore.getAll as Mock).mockResolvedValue([
+        stationFeed('feed-cooled', { lastFetched: null, lastFailedFetchAt: undefined }),
+      ]);
+      // Simulate background cycle just finishing and putting the feed in cooldown on getById.
+      (feedStore.getById as Mock).mockResolvedValue(
+        stationFeed('feed-cooled', { lastFetched: new Date(), lastFailedFetchAt: undefined }),
+      );
+      let firstQuery = true;
+      (articleStore.query as Mock).mockImplementation((query: MockArticleQuery) => {
+        if (query.feedIds?.includes('feed-cooled')) {
+          if (firstQuery) {
+            firstQuery = false;
+            return Promise.resolve({ articles: [], total: 0 });
+          }
+          return Promise.resolve({ articles: [...committedRows], total: committedRows.length });
+        }
+        return Promise.resolve({ articles: [], total: 0 });
+      });
+
+      act(() => {
+        root.render(
+          <FeedProvider>
+            <Probe />
+          </FeedProvider>,
+        );
+      });
+      await waitForExpectation(() => expect(latestContext).not.toBeNull());
+
+      await act(async () => {
+        void latestContext!.selectFeed('feed-cooled', 'https://cooled.example.com/rss.xml', 'Cooled Feed');
+      });
+
+      await waitForExpectation(() => {
+        expect(latestContext!.selectedFeedId).toBe('feed-cooled');
+        expect(latestContext!.isLoadingArticles).toBe(false);
+        expect(latestContext!.articles.map((article) => article.hash)).toEqual(['hash-bg-won']);
+      }, 3000);
+    });
+
+    it('releases the scheduler pause and avoids empty flashes when switching to Smart Views (Unread and Saved)', async () => {
+      const stateHistory: Array<{
+        view: string | null;
+        isLoadingArticles: boolean;
+        isSavedListLoading: boolean;
+        articleCount: number;
+      }> = [];
+      const unreadDeferred = createDeferred<{ articles: Article[]; total: number }>();
+      const savedDeferred = createDeferred<{ articles: Article[]; total: number }>();
+
+      (articleStore.query as Mock).mockImplementation((query: MockArticleQuery) => {
+        if (query.filter?.read === false) {
+          return unreadDeferred.promise;
+        }
+        return Promise.resolve({ articles: [], total: 0 });
+      });
+      (savedArticlesService.querySavedViewArticles as Mock).mockImplementation(() => savedDeferred.promise);
+
+      const HistoryProbe: React.FC = () => {
+        latestContext = useFeed();
+        stateHistory.push({
+          view: latestContext.selectedSmartView,
+          isLoadingArticles: latestContext.isLoadingArticles,
+          isSavedListLoading: latestContext.isSavedListLoading,
+          articleCount: latestContext.articles.length,
+        });
+        return null;
+      };
+
+      act(() => {
+        root.render(
+          <FeedProvider>
+            <HistoryProbe />
+          </FeedProvider>,
+        );
+      });
+      await waitForExpectation(() => expect(latestContext).not.toBeNull());
+
+      await act(async () => {
+        void latestContext!.selectSmartView('unread');
+      });
+
+      await waitForExpectation(() => {
+        expect(latestContext!.selectedSmartView).toBe('unread');
+        expect(latestContext!.isLoadingArticles).toBe(true);
+      });
+
+      unreadDeferred.resolve({
+        articles: [createArticle('hash-unread-1', 'feed-a')],
+        total: 1,
+      });
+
+      await waitForExpectation(() => {
+        expect(latestContext!.isLoadingArticles).toBe(false);
+        expect(latestContext!.articles.map((article) => article.hash)).toEqual(['hash-unread-1']);
+      });
+
+      const unreadStates = stateHistory.filter((entry) => entry.view === 'unread');
+      expect(
+        unreadStates.filter((entry) => !entry.isLoadingArticles && entry.articleCount === 0),
+      ).toEqual([]);
+      expect(feedScheduler.isStationSelectionPaused()).toBe(false);
+
+      await act(async () => {
+        void latestContext!.selectSmartView('saved');
+      });
+
+      await waitForExpectation(() => {
+        expect(latestContext!.selectedSmartView).toBe('saved');
+        expect(latestContext!.isSavedListLoading).toBe(true);
+        expect(latestContext!.articles).toEqual([]);
+      });
+
+      savedDeferred.resolve({
+        articles: [createArticle('hash-saved-1', 'feed-a')],
+        total: 1,
+      });
+
+      await waitForExpectation(() => {
+        expect(latestContext!.isSavedListLoading).toBe(false);
+        expect(latestContext!.articles.map((article) => article.hash)).toEqual(['hash-saved-1']);
+      });
+
+      const savedStates = stateHistory.filter((entry) => entry.view === 'saved');
+      expect(
+        savedStates.filter((entry) => !entry.isSavedListLoading && entry.articleCount === 0),
+      ).toEqual([]);
+      expect(feedScheduler.isStationSelectionPaused()).toBe(false);
     });
   });
 });

@@ -11,6 +11,7 @@ import { maybeRefreshFavicon } from '@/services/favicons/faviconRefreshService';
 import { settingsManager } from '@/services/settings';
 import { createTaskPool } from '@/services/tasks/taskPool';
 import { logger } from '@/services/logger';
+import { invalidateFeedMetadataCache } from '@/services/feeds/feedMetadataCache';
 import { feedLibraryMutationBus } from '@/services/ui/feedLibraryMutationBus';
 import { recordRobustnessDuration, recordRobustnessEvent } from '@/services/diagnostics/robustnessMetrics';
 import { getE2eConfig } from '@/services/e2e/e2eHarness';
@@ -1558,6 +1559,10 @@ class FeedSchedulerService {
 
       if (!this.isCurrentLifecycle(lifecycleId)) {
         return;
+      }
+
+      if (result.feedResults.length > 0) {
+        invalidateFeedMetadataCache();
       }
 
       // The native IPC has no cancellation channel, so a superseded cycle

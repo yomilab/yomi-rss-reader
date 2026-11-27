@@ -131,6 +131,7 @@ function analyze(files) {
   let unhandledRejections = 0;
   let nativeCycleFailedNonAbort = 0;
   let pauseSafetyWarnings = 0;
+  let slowColdSwitchSkeletonWaits = 0;
   const nativeRecordedFailures = new Map();
 
   for (const file of files) {
@@ -160,6 +161,7 @@ function analyze(files) {
         nativeCycleFailedNonAbort += 1;
       }
       if (entry.category === "Scheduler" && /safety/i.test(entry.message)) pauseSafetyWarnings += 1;
+      if (entry.message === "Slow cold switch skeleton wait") slowColdSwitchSkeletonWaits += 1;
       if (entry.message === "Background refresh cycle completed") {
         session.cycles += 1;
         session.cycleCompletedTs.push(entry.ts);
@@ -182,6 +184,7 @@ function analyze(files) {
     unhandledRejections,
     nativeCycleFailedNonAbort,
     pauseSafetyWarnings,
+    slowColdSwitchSkeletonWaits,
     nativeRecordedFailures,
   };
 }
@@ -207,6 +210,11 @@ function buildChecks(result) {
 
   add(result.pauseSafetyWarnings === 0 ? "PASS" : "FAIL", "Station pause never hit the 10-minute safety release",
     `${result.pauseSafetyWarnings} safety releases logged`);
+
+  if (result.slowColdSwitchSkeletonWaits > 0) {
+    add("WARN", "Slow cold switch skeleton waits (>8s)",
+      `${result.slowColdSwitchSkeletonWaits} slow switch(es) logged`);
+  }
 
   add(result.nativeCycleFailedNonAbort === 0 ? "PASS" : "WARN", "Native cycles did not fail (non-abort)",
     `${result.nativeCycleFailedNonAbort} non-abort cycle failures`);
@@ -246,6 +254,26 @@ function buildChecks(result) {
       }
       if ((counters["scheduler.stationPauseSafetyRelease"] ?? 0) > 0) {
         add("FAIL", `${label}: station pause safety release counter`, String(counters["scheduler.stationPauseSafetyRelease"]));
+      }
+      const switchInteractive = durations["sidebarSwitch.interactiveMs"];
+      if (switchInteractive) {
+        add(switchInteractive.avgMs <= 180 ? "PASS" : "WARN", `${label}: sidebar switch interactive latency`,
+          `count ${switchInteractive.count}, avg ${switchInteractive.avgMs} ms, max ${switchInteractive.maxMs} ms`);
+      }
+      const switchSqlite = durations["sidebarSwitch.sqlitePageMs"];
+      if (switchSqlite) {
+        add(switchSqlite.avgMs <= 120 ? "PASS" : "WARN", `${label}: sidebar switch SQLite page latency`,
+          `count ${switchSqlite.count}, avg ${switchSqlite.avgMs} ms, max ${switchSqlite.maxMs} ms`);
+      }
+      const skeletonVisible = durations["sidebarSwitch.skeletonVisibleMs"];
+      if (skeletonVisible) {
+        add(skeletonVisible.maxMs <= 10_000 ? "PASS" : "WARN", `${label}: cold switch skeleton duration`,
+          `count ${skeletonVisible.count}, avg ${skeletonVisible.avgMs} ms, max ${skeletonVisible.maxMs} ms`);
+      }
+      const initialFetchWait = durations["sidebarSwitch.initialFetchWaitMs"];
+      if (initialFetchWait) {
+        add(initialFetchWait.maxMs <= 10_000 ? "PASS" : "WARN", `${label}: initial-fetch skeleton wait`,
+          `count ${initialFetchWait.count}, avg ${initialFetchWait.avgMs} ms, max ${initialFetchWait.maxMs} ms`);
       }
       const native = robustness.native ?? {};
       add("INFO", `${label}: robustness counters`, JSON.stringify({ ...counters, native }));

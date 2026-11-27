@@ -39,12 +39,11 @@ export interface NativeFeedRefreshResult {
 // Native refresh lock with activity-kind awareness.
 //
 // A foreground switch/manual refresh must never block on a running background
-// cycle. The Rust `preview_native_refresh_cycle` IPC has no JS-side cancellation
-// channel, so `pauseForStationSelection`'s signal abort cannot stop an in-flight
-// background cycle — it runs to completion (tens of seconds for a full-library
-// catch-up). Serializing the foreground turn behind it (the old global chain)
+// cycle. Background cycles can run for tens of seconds on a full-library
+// catch-up, so serializing foreground turns behind them (the old global chain)
 // made the article-list spinner stay up for the entire background cycle and
-// deferred the SQLite reconcile, which users perceived as a freeze.
+// deferred SQLite reconcile. Foreground turns do pass an abort-wired `cycleId`
+// (`scheduler_cancel_native_cycle`) so superseded foreground hops drain fast.
 //
 // Rules:
 //  - foreground turns serialize among themselves (preserves per-feed FIFO for
@@ -58,6 +57,7 @@ export interface NativeFeedRefreshResult {
 //    the in-flight background batch — bounded and concurrent.
 let foregroundTail: Promise<void> = Promise.resolve();
 let backgroundTail: Promise<void> = Promise.resolve();
+let foregroundCycleSeq = 0;
 
 /** Test-only: drop stranded FG/BG lock tails after aborted gated cycles. */
 export function resetNativeRefreshLockForTests(): void {
@@ -127,15 +127,17 @@ export async function runNativeFeedRefresh(
   const forceRefreshFeedIds = request.forceRefreshFeedIds;
   const activityKind = request.activityKind ?? "foreground";
   const scopedFeedIds = scope.onlyFeedIds ?? new Set(request.feedIds ?? []);
+  const effectiveCycleId = request.cycleId
+    ?? (activityKind === "foreground" && request.signal ? `fg-${++foregroundCycleSeq}` : undefined);
 
   const isScopedFeedEvent = (feedId: string): boolean =>
     scopedFeedIds.size === 0 || scopedFeedIds.has(feedId);
 
   const matchesCycleId = (eventCycleId: string | undefined): boolean => {
-    if (!request.cycleId) {
+    if (!effectiveCycleId) {
       return true;
     }
-    return eventCycleId === request.cycleId;
+    return eventCycleId === effectiveCycleId;
   };
 
   return withNativeRefreshLock(async () => {
@@ -145,8 +147,22 @@ export async function runNativeFeedRefresh(
     const queuedRelease = {
       release: null as ((feedId?: string) => void) | null,
     };
+    const abortNativeCycle = (): void => {
+      if (!effectiveCycleId) {
+        return;
+      }
+      void tauriClient.scheduler?.cancelNativeCycle?.({ cycleId: effectiveCycleId })?.catch(() => undefined);
+    };
+    let removeAbortListener: (() => void) | null = null;
 
     try {
+      if (activityKind === "foreground" && request.signal && effectiveCycleId) {
+        request.signal.addEventListener("abort", abortNativeCycle, { once: true });
+        removeAbortListener = () => {
+          request.signal?.removeEventListener("abort", abortNativeCycle);
+        };
+      }
+
       const startUnlisten = await listen<SchedulerNativeCycleStartPayload>(
         SCHEDULER_NATIVE_CYCLE_START_EVENT,
         (event) => {
@@ -198,7 +214,7 @@ export async function runNativeFeedRefresh(
           skipFeedIdsForThisCycle: request.skipFeedIdsForThisCycle,
           forceRefreshFeedIds,
           concurrency: request.concurrency ?? getSchedulerConcurrency(),
-          cycleId: request.cycleId,
+          cycleId: effectiveCycleId,
         }),
       );
 
@@ -251,6 +267,7 @@ export async function runNativeFeedRefresh(
         insertedByFeedId,
       };
     } finally {
+      removeAbortListener?.();
       for (const unlisten of unlisteners) {
         unlisten();
       }

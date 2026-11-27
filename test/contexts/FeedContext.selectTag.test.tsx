@@ -1973,4 +1973,255 @@ describe('FeedContext selectTag', () => {
       }, 3000);
     });
   });
+
+  describe('initial-fetch skeleton hold & progressive reveal for never-fetched stations', () => {
+    beforeEach(() => {
+      (isNativeFeedIngestionEnabled as unknown as Mock).mockReturnValue(true);
+    });
+
+    afterEach(() => {
+      (isNativeFeedIngestionEnabled as unknown as Mock).mockReturnValue(false);
+    });
+
+    it('holds skeleton and runs foreground native fetch when clicking a newly imported station without awaitInitialFetch', async () => {
+      const stateHistory: Array<{ isLoadingArticles: boolean; articleCount: number }> = [];
+      const nativeDeferred = createDeferred<nativeFeedRefresh.NativeFeedRefreshResult>();
+      const committedRows: Article[] = [];
+
+      (tagsManager.getFeedsByTag as vi.Mock).mockResolvedValue(['feed-new-1']);
+      (feedStore.getAll as vi.Mock).mockResolvedValue([
+        stationFeed('feed-new-1', { lastFetched: null, lastFailedFetchAt: undefined }),
+      ]);
+      (articleStore.query as vi.Mock).mockImplementation((query: { tagName?: string }) => {
+        if (query.tagName === 'Science') {
+          return Promise.resolve({ articles: [...committedRows], total: committedRows.length });
+        }
+        return Promise.resolve({ articles: [], total: 0 });
+      });
+      const nativeSpy = vi.spyOn(nativeFeedRefresh, 'runNativeFeedRefresh').mockImplementation(
+        async () => nativeDeferred.promise,
+      );
+
+      const HistoryProbe: React.FC = () => {
+        latestContext = useFeed();
+        stateHistory.push({
+          isLoadingArticles: latestContext.isLoadingArticles,
+          articleCount: latestContext.articles.length,
+        });
+        return null;
+      };
+
+      act(() => {
+        root.render(
+          <FeedProvider>
+            <HistoryProbe />
+          </FeedProvider>,
+        );
+      });
+      await waitForExpectation(() => expect(latestContext).not.toBeNull());
+
+      await act(async () => {
+        void latestContext!.selectTag('Science');
+      });
+
+      await waitForExpectation(() => {
+        expect(latestContext!.selectedTag).toBe('Science');
+        expect(latestContext!.isLoadingArticles).toBe(true);
+        expect(nativeSpy).toHaveBeenCalledTimes(1);
+      }, 3000);
+
+      expect(boostManySpy).not.toHaveBeenCalled();
+      expect(robustnessCount('sidebarSwitch.coldInitialFetchHold')).toBe(1);
+      const skeletonIndex = stateHistory.findIndex((entry) => entry.isLoadingArticles);
+      expect(skeletonIndex).toBeGreaterThanOrEqual(0);
+      expect(
+        stateHistory.slice(skeletonIndex + 1).filter((entry) => !entry.isLoadingArticles && entry.articleCount === 0),
+      ).toEqual([]);
+
+      committedRows.push(createArticle('hash-sci-1', 'feed-new-1'));
+      nativeDeferred.resolve({
+        insertedArticles: 1,
+        feedResults: [{ feedId: 'feed-new-1', status: 'changed', insertedCount: 1 }],
+        insertedByFeedId: new Map([['feed-new-1', 1]]),
+      });
+
+      await waitForExpectation(() => {
+        expect(latestContext!.isLoadingArticles).toBe(false);
+        expect(latestContext!.articles.map((article) => article.hash)).toEqual(['hash-sci-1']);
+      }, 3000);
+
+      expect(
+        stateHistory.slice(skeletonIndex + 1).filter((entry) => !entry.isLoadingArticles && entry.articleCount === 0),
+      ).toEqual([]);
+      const durations = getRobustnessSnapshot().durations;
+      expect(durations['sidebarSwitch.sqlitePageMs']?.count).toBeGreaterThanOrEqual(1);
+      expect(durations['sidebarSwitch.skeletonVisibleMs']?.count).toBeGreaterThanOrEqual(1);
+      expect(durations['sidebarSwitch.initialFetchWaitMs']?.count).toBeGreaterThanOrEqual(1);
+      nativeSpy.mockRestore();
+    });
+
+    it('reveals articles progressively via onFeedComplete before slower feeds in the foreground batch finish', async () => {
+      const nativeDeferred = createDeferred<nativeFeedRefresh.NativeFeedRefreshResult>();
+      const committedRows: Article[] = [];
+      let capturedOnFeedComplete: ((payload: { feedId: string; status: 'changed'; insertedCount: number }) => void) | undefined;
+
+      (tagsManager.getFeedsByTag as vi.Mock).mockResolvedValue(['feed-fast', 'feed-slow']);
+      (feedStore.getAll as vi.Mock).mockResolvedValue([
+        stationFeed('feed-fast', { lastFetched: null, lastFailedFetchAt: undefined }),
+        stationFeed('feed-slow', { lastFetched: null, lastFailedFetchAt: undefined }),
+      ]);
+      (articleStore.query as vi.Mock).mockImplementation((query: { tagName?: string }) => {
+        if (query.tagName === 'Tech') {
+          return Promise.resolve({ articles: [...committedRows], total: committedRows.length });
+        }
+        return Promise.resolve({ articles: [], total: 0 });
+      });
+      const nativeSpy = vi.spyOn(nativeFeedRefresh, 'runNativeFeedRefresh').mockImplementation(
+        async (request) => {
+          capturedOnFeedComplete = request.onFeedComplete as typeof capturedOnFeedComplete;
+          return nativeDeferred.promise;
+        },
+      );
+
+      act(() => {
+        root.render(
+          <FeedProvider>
+            <Probe />
+          </FeedProvider>,
+        );
+      });
+      await waitForExpectation(() => expect(latestContext).not.toBeNull());
+
+      await act(async () => {
+        void latestContext!.selectTag('Tech');
+      });
+
+      await waitForExpectation(() => {
+        expect(nativeSpy).toHaveBeenCalledTimes(1);
+        expect(capturedOnFeedComplete).toBeDefined();
+      }, 3000);
+
+      expect(latestContext!.isLoadingArticles).toBe(true);
+
+      committedRows.push(createArticle('hash-fast-1', 'feed-fast'));
+      act(() => {
+        capturedOnFeedComplete?.({ feedId: 'feed-fast', status: 'changed', insertedCount: 1 });
+      });
+
+      await waitForExpectation(() => {
+        expect(latestContext!.isLoadingArticles).toBe(false);
+        expect(latestContext!.articles.map((article) => article.hash)).toEqual(['hash-fast-1']);
+      }, 3000);
+
+      nativeDeferred.resolve({
+        insertedArticles: 1,
+        feedResults: [
+          { feedId: 'feed-fast', status: 'changed', insertedCount: 1 },
+          { feedId: 'feed-slow', status: 'not-modified', insertedCount: 0 },
+        ],
+        insertedByFeedId: new Map([['feed-fast', 1]]),
+      });
+
+      await waitForExpectation(() => {
+        expect(latestContext!.isLoadingArticles).toBe(false);
+      });
+      nativeSpy.mockRestore();
+    });
+
+    it('clears skeleton immediately to honest empty view for an already-fetched station with zero articles', async () => {
+      (tagsManager.getFeedsByTag as vi.Mock).mockResolvedValue(['feed-empty']);
+      (feedStore.getAll as vi.Mock).mockResolvedValue([
+        stationFeed('feed-empty', { lastFetched: new Date(), lastFailedFetchAt: undefined }),
+      ]);
+      (articleStore.query as vi.Mock).mockResolvedValue({ articles: [], total: 0 });
+
+      act(() => {
+        root.render(
+          <FeedProvider>
+            <Probe />
+          </FeedProvider>,
+        );
+      });
+      await waitForExpectation(() => expect(latestContext).not.toBeNull());
+
+      await act(async () => {
+        void latestContext!.selectTag('Quiet');
+      });
+
+      await waitForExpectation(() => {
+        expect(latestContext!.selectedTag).toBe('Quiet');
+        expect(latestContext!.isLoadingArticles).toBe(false);
+        expect(latestContext!.articles).toEqual([]);
+      }, 3000);
+
+      await waitForExpectation(() => {
+        expect(boostManySpy).toHaveBeenCalledWith(['feed-empty']);
+      }, 3000);
+      expect(robustnessCount('sidebarSwitch.coldInitialFetchHold')).toBeUndefined();
+      expect(robustnessCount('sidebarSwitch.emptyWithoutRows')).toBe(1);
+    });
+
+    it('records cancelledDuringInitialFetch and aborts the foreground signal on rapid hop away', async () => {
+      const nativeDeferred = createDeferred<nativeFeedRefresh.NativeFeedRefreshResult>();
+      let capturedSignal: AbortSignal | undefined;
+
+      (tagsManager.getFeedsByTag as vi.Mock).mockImplementation((tagName: string) =>
+        Promise.resolve(tagName === 'First' ? ['feed-first'] : ['feed-second']),
+      );
+      (feedStore.getAll as vi.Mock).mockResolvedValue([
+        stationFeed('feed-first', { lastFetched: null, lastFailedFetchAt: undefined }),
+        stationFeed('feed-second', { lastFetched: new Date(), lastFailedFetchAt: undefined }),
+      ]);
+      (articleStore.query as vi.Mock).mockImplementation((query: { tagName?: string }) => {
+        if (query.tagName === 'Second') {
+          return Promise.resolve({ articles: [createArticle('hash-second', 'feed-second')], total: 1 });
+        }
+        return Promise.resolve({ articles: [], total: 0 });
+      });
+      const nativeSpy = vi.spyOn(nativeFeedRefresh, 'runNativeFeedRefresh').mockImplementation(
+        async (request) => {
+          capturedSignal = request.signal;
+          return nativeDeferred.promise;
+        },
+      );
+
+      act(() => {
+        root.render(
+          <FeedProvider>
+            <Probe />
+          </FeedProvider>,
+        );
+      });
+      await waitForExpectation(() => expect(latestContext).not.toBeNull());
+
+      await act(async () => {
+        void latestContext!.selectTag('First');
+      });
+
+      await waitForExpectation(() => {
+        expect(robustnessCount('sidebarSwitch.coldInitialFetchHold')).toBe(1);
+        expect(capturedSignal).toBeDefined();
+      }, 3000);
+
+      await act(async () => {
+        void latestContext!.selectTag('Second');
+      });
+
+      await waitForExpectation(() => {
+        expect(latestContext!.selectedTag).toBe('Second');
+        expect(latestContext!.isLoadingArticles).toBe(false);
+        expect(latestContext!.articles.map((article) => article.hash)).toEqual(['hash-second']);
+      }, 3000);
+
+      expect(capturedSignal?.aborted).toBe(true);
+      expect(robustnessCount('sidebarSwitch.cancelledDuringInitialFetch')).toBe(1);
+
+      nativeDeferred.resolve({
+        insertedArticles: 0,
+        feedResults: [],
+        insertedByFeedId: new Map(),
+      });
+      nativeSpy.mockRestore();
+    });
+  });
 });

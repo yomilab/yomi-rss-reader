@@ -209,4 +209,15 @@ describe('article list skeleton fill', () => {
     expect(css).not.toMatch(/\.article-list-skeleton-group[\s\S]{0,400}100vh/);
     expect(css).not.toMatch(/\.article-list-skeleton-group[\s\S]{0,600}black 60%/);
   });
+
+  it('defines skeleton and shimmer tokens on .article-list so the header skeleton inherits them', () => {
+    const articleListCss = readFileSync(join(process.cwd(), 'src/components/MainArea/ArticleList.css'), 'utf8');
+    const readerThemesCss = readFileSync(join(process.cwd(), 'src/styles/reader-themes.css'), 'utf8');
+
+    expect(articleListCss).toMatch(/\.article-list\s*\{[\s\S]*?--article-list-skeleton-bg:/);
+    expect(articleListCss).toMatch(/\.article-list\s*\{[\s\S]*?--article-list-skeleton-shimmer-mid:/);
+    expect(articleListCss).toMatch(/\[data-theme="dark"\]\s*\.article-list\s*\{[\s\S]*?--article-list-skeleton-bg:/);
+    expect(readerThemesCss).toMatch(/:root\[data-reader-theme\]\s*\.article-list\s*\{[\s\S]*?--article-list-skeleton-bg:/);
+    expect(readerThemesCss).not.toMatch(/:root\[data-reader-theme\]\s*\.article-list-items\s*\{[\s\S]*?--article-list-skeleton-bg:/);
+  });
 });

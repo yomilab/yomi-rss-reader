@@ -12,11 +12,18 @@ export function createE2eContentServer(routes) {
 
     const body = typeof route.body === "function" ? route.body() : route.body;
     const contentType = route.contentType ?? "text/plain; charset=utf-8";
-    response.writeHead(200, {
-      "content-type": contentType,
-      "cache-control": "no-store",
-    });
-    response.end(body);
+    const send = () => {
+      response.writeHead(200, {
+        "content-type": contentType,
+        "cache-control": "no-store",
+      });
+      response.end(body);
+    };
+    if (typeof route.delayMs === "number" && route.delayMs > 0) {
+      setTimeout(send, route.delayMs);
+      return;
+    }
+    send();
   });
 
   return {

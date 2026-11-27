@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   useFeedCollectionArticles,
+  useFeedCollectionLoading,
   useFeedNavigation,
   useFeedOverlay,
 } from '@/contexts/FeedContext';
@@ -15,6 +16,7 @@ import { getRendererWindowType, isMainRendererWindow } from '@/utils/rendererWin
 
 export const useE2eUiProbes = (): void => {
   const { articles, articlesTotalCount, articlesTotalKnown, pageWasFull } = useFeedCollectionArticles();
+  const { isLoadingArticles, isSavedListLoading } = useFeedCollectionLoading();
   const { selectedFeedId, selectedTag, selectedSmartView, navigationNonce } = useFeedNavigation();
   const {
     articleViewOverlayPhase,
@@ -62,7 +64,9 @@ export const useE2eUiProbes = (): void => {
       return;
     }
 
-    const snapshotKey = `${selectedFeedId ?? ''}:${selectedTag ?? ''}:${selectedSmartView ?? ''}:${navigationNonce}:${articles.length}`;
+    const isListLoading = selectedSmartView === 'saved' ? isSavedListLoading : isLoadingArticles;
+    const isInitialLoading = isListLoading && articles.length === 0;
+    const snapshotKey = `${selectedFeedId ?? ''}:${selectedTag ?? ''}:${selectedSmartView ?? ''}:${navigationNonce}:${articles.length}:${isInitialLoading ? 'loading' : 'ready'}`;
     const hasActiveSource = Boolean(selectedFeedId || selectedTag || selectedSmartView);
     if ((!hasActiveSource && articles.length < 1) || listSnapshotRef.current === snapshotKey) {
       return;
@@ -74,13 +78,16 @@ export const useE2eUiProbes = (): void => {
       articlesTotalCount,
       articlesTotalKnown,
       pageWasFull,
+      isLoadingArticles,
+      isSavedListLoading,
+      isInitialLoading,
       feedId: selectedFeedId,
       selectedFeedId,
       selectedTag,
       selectedSmartView,
       navigationNonce,
     });
-  }, [articles.length, articlesTotalCount, articlesTotalKnown, pageWasFull, e2eConfig, navigationNonce, selectedFeedId, selectedTag, selectedSmartView]);
+  }, [articles.length, articlesTotalCount, articlesTotalKnown, pageWasFull, e2eConfig, isLoadingArticles, isSavedListLoading, navigationNonce, selectedFeedId, selectedTag, selectedSmartView]);
 
   useEffect(() => {
     if (!e2eConfig) {

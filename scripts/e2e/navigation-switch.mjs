@@ -20,6 +20,8 @@ import {
 import {
   createE2eSessionDirs,
   formatE2eFailure,
+  readEvent,
+  sleep,
   startE2eApp,
   stopE2eApp,
   waitForEvent,
@@ -65,6 +67,7 @@ export async function runNavigationSwitchE2e() {
     },
     "/beta.xml": {
       contentType: "application/atom+xml; charset=utf-8",
+      delayMs: 450,
       body: buildAtomFeed({
         feedId: "e2e-beta",
         title: "E2E Beta Feed",
@@ -114,6 +117,31 @@ export async function runNavigationSwitchE2e() {
       "navigation-changed",
       (event) => event.payload?.selectedTag === E2E_STATION_BETA,
     );
+    let sawBetaSkeleton = false;
+    let betaStationReady = null;
+    const betaDeadline = Date.now() + CI_E2E_LIST_TIMEOUT_MS;
+    while (Date.now() < betaDeadline) {
+      const snapshot = readEvent(e2eDir, "article-list-snapshot");
+      if (snapshot?.payload?.selectedTag === E2E_STATION_BETA) {
+        const count = snapshot.payload?.articleCount ?? 0;
+        if (snapshot.payload?.isInitialLoading === false && count === 0) {
+          throw new Error("Newly imported Beta station flashed an empty 0-item list instead of holding the skeleton");
+        }
+        if (snapshot.payload?.isInitialLoading === true && count === 0) {
+          sawBetaSkeleton = true;
+        }
+        if (snapshot.payload?.isInitialLoading === false && count >= 1) {
+          betaStationReady = snapshot;
+          break;
+        }
+      }
+      await sleep(25);
+    }
+    if (!sawBetaSkeleton || (betaStationReady?.payload?.articleCount ?? 0) < 1) {
+      throw new Error(
+        `Expected Beta station to hold initial skeleton then publish >= 1 articles (sawBetaSkeleton=${sawBetaSkeleton}, readyCount=${betaStationReady?.payload?.articleCount ?? 0})`,
+      );
+    }
 
     writeE2eCommand(e2eDir, "select-feed", { feedId: betaFeed.id });
     const betaList = await waitForEvent(
