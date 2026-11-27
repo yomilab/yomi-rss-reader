@@ -4,6 +4,13 @@
 
 ## Unreleased
 
+## [2.2.1] - 2026-11-27
+
+### Fixed
+
+- Opening a newly imported station or feed for the first time now shows the loading shimmer until articles arrive instead of an empty list.
+- Switching to Saved or other Library views no longer briefly flashes an empty view or delays background feed updates.
+
 ## [2.2.0] - 2026-11-20
 
 ### Added
